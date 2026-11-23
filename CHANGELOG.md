@@ -3,12 +3,14 @@
 本文件记录每个公开发布版本的变更；格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [1.1.1] - 2026-11-23
 
 ### 变更
 
 - 技能与常驻提示词明确：当前宿主会为每个小程序注册并声明全部已评审的
   `jiezi/native` 原生组件，无需逐应用授权；新增原生能力仍需宿主版本和明确用户同意。
+
+[1.1.1]: https://github.com/FengWuFei/dsh-jiezi/releases/tag/v1.1.1
 
 ## [1.1.0] - 2026-11-23
 
