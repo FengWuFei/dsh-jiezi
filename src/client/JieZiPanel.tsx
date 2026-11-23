@@ -189,11 +189,13 @@ function automationRows(entries: AutomationView[], t: (key: string) => string) {
 }
 
 /** One device row with presence, active app, and the unpair action. */
-function DeviceRow({ device, t, busy, onUnpair }: {
+function DeviceRow({ device, t, busy, launching, onUnpair, onLaunch }: {
   device: DeviceView;
   t: (key: string) => string;
   busy: boolean;
+  launching: boolean;
   onUnpair: (deviceId: string) => void;
+  onLaunch: (deviceId: string) => void;
 }) {
   const app = device.activeApp;
   return (
@@ -204,11 +206,16 @@ function DeviceRow({ device, t, busy, onUnpair }: {
           <span className="jz-mono jz-muted">{device.deviceId}</span>
         </div>
         <div className="jz-row-side">
-          <span className={`jz-pill ${device.online ? 'jz-pill-paired' : 'jz-pill-expired'}`}>
-            {device.online ? t('online') : t('offline')}
+          <span className={`jz-pill ${device.hostRunning ? 'jz-pill-paired' : 'jz-pill-expired'}`}>
+            {device.hostRunning ? t('online') : t('offline')}
           </span>
           {device.developerMode ? <span className="jz-badge">{t('developerMode')}</span> : null}
           {device.automation ? <span className="jz-badge">{t('automation')}</span> : null}
+          {device.hostVersion !== null ? (
+            <span className={`jz-badge ${device.hostCompatibility === 'outdated' ? 'jz-badge-warn' : ''}`}>
+              Host v{device.hostVersion}
+            </span>
+          ) : null}
         </div>
       </div>
       <div className="jz-device-body">
@@ -224,9 +231,21 @@ function DeviceRow({ device, t, busy, onUnpair }: {
         {app !== null && app.installedApps.length > 0 ? (
           <span className="jz-muted">{t('installedApps')}: {app.installedApps.length}</span>
         ) : null}
+        {device.coreDevicePaired !== null ? (
+          <span className="jz-muted">{t('coreDevicePaired')}: {device.coreDevicePaired ? '✓' : '—'}</span>
+        ) : null}
+        {device.hostCompatibility === 'outdated' ? (
+          <span className="jz-error-inline">{t('hostOutdated')}</span>
+        ) : null}
+        {device.nextAction !== null ? <span className="jz-muted">{device.nextAction}</span> : null}
       </div>
       <div className="jz-actions jz-actions-end">
-        <button type="button" className="jz-button" onClick={() => onUnpair(device.deviceId)} disabled={busy}>
+        {!device.hostRunning ? (
+          <button type="button" className="jz-button jz-button-primary" onClick={() => onLaunch(device.deviceId)} disabled={busy || launching}>
+            {launching ? t('loading') : t('launchHost')}
+          </button>
+        ) : null}
+        <button type="button" className="jz-button" onClick={() => onUnpair(device.deviceId)} disabled={busy || launching}>
           {t('unpair')}
         </button>
       </div>
@@ -311,7 +330,11 @@ export function JieZiPanel({ t }: MainPanelProps) {
   const [pairBusy, setPairBusy] = useState(false);
   const [pairMessage, setPairMessage] = useState<string | null>(null);
   const [unpairing, setUnpairing] = useState<string | null>(null);
+  const [launching, setLaunching] = useState<string | null>(null);
   const [deviceMessage, setDeviceMessage] = useState<string | null>(null);
+  const [bridgeBusy, setBridgeBusy] = useState(false);
+  const [bridgeMessage, setBridgeMessage] = useState<string | null>(null);
+  const autoRef = useRef<string | null>(null);
   const mounted = useRef(true);
 
   const refresh = useCallback(async (quiet = false): Promise<void> => {
@@ -393,6 +416,91 @@ export function JieZiPanel({ t }: MainPanelProps) {
     }
   }, [translate]);
 
+  // Opening the panel on an expired session should offer a usable QR again.
+  // The guard is per session/deadline, so a failed generation is not retried in
+  // a loop and a manual disconnect (state none) stays disconnected.
+  useEffect(() => {
+    if (pairingState !== 'expired' || pairBusy || document.visibilityState !== 'visible') return;
+    const key = sessionId ?? `expired:${pairing.expiresAt ?? 'unknown'}`;
+    if (autoRef.current === key) return;
+    autoRef.current = key;
+    void generate();
+  }, [pairingState, sessionId, pairing.expiresAt, pairBusy, generate]);
+
+  // One automatic regeneration per expired session keeps an open panel usable
+  // without generating QR codes forever or overriding a manual disconnect.
+  useEffect(() => {
+    if (sessionId === null || pairingState !== 'waiting') return;
+    const expiresAt = pairing.payload?.expiresAt ?? null;
+    if (expiresAt === null) return;
+    const deadline = Date.parse(expiresAt);
+    if (Number.isNaN(deadline)) return;
+    let stopped = false;
+    let timer: number | undefined;
+    const tick = (): void => {
+      if (stopped) return;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        if (autoRef.current !== sessionId && !pairBusy && document.visibilityState === 'visible') {
+          autoRef.current = sessionId;
+          void generate();
+        }
+        return;
+      }
+      timer = window.setTimeout(tick, Math.min(remaining + 250, 1_000));
+    };
+    tick();
+    return () => {
+      stopped = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [sessionId, pairingState, pairing.payload?.expiresAt, pairBusy, generate]);
+
+  const restartBridge = useCallback(async (): Promise<void> => {
+    setBridgeBusy(true);
+    setBridgeMessage(null);
+    const result = await apiPost<{ ok: true; restarted: boolean }>(API_ROUTES.bridge, { action: 'restart' });
+    if (!mounted.current) return;
+    setBridgeBusy(false);
+    if (result.ok) {
+      setBridgeMessage(translate('bridgeRestarted'));
+      autoRef.current = null;
+      void refresh(true);
+    } else {
+      setBridgeMessage(`${translate('actionFailed')}: ${result.message}`);
+    }
+  }, [refresh, translate]);
+
+  const checkEnvironment = useCallback(async (): Promise<void> => {
+    setBridgeBusy(true);
+    setBridgeMessage(null);
+    const result = await apiPost<{
+      ok: true;
+      ready: boolean;
+      nsh: { path: string | null; version: string | null; found: boolean } | null;
+      blockers: Array<{ message: string }>;
+      nextActions?: string[];
+    }>(
+      API_ROUTES.bridge,
+      { action: 'doctor' },
+    );
+    if (!mounted.current) return;
+    setBridgeBusy(false);
+    if (result.ok) {
+      const nsh = result.value.nsh;
+      const nshText = nsh?.found === true
+        ? `nsh ${nsh.version ?? ''} · ${nsh.path ?? ''}`.trim()
+        : translate('nshMissing');
+      const next = (result.value.nextActions ?? []).slice(0, 2).join(' · ');
+      setBridgeMessage(result.value.ready
+        ? `${translate('environmentReady')} · ${nshText}${next.length > 0 ? ` · ${next}` : ''}`
+        : `${translate('environmentBlocked')} · ${result.value.blockers.map((item) => item.message).join(' · ')}`);
+      void refresh(true);
+    } else {
+      setBridgeMessage(`${translate('actionFailed')}: ${result.message}`);
+    }
+  }, [refresh, translate]);
+
   const disconnect = useCallback((): void => {
     const current = pairing.payload?.sessionId ?? null;
     setDismissedSession(current);
@@ -408,6 +516,22 @@ export function JieZiPanel({ t }: MainPanelProps) {
     setUnpairing(null);
     if (result.ok) {
       setDeviceMessage(translate('unpairDone'));
+      void refresh(true);
+    } else {
+      setDeviceMessage(`${translate('actionFailed')}: ${result.message}`);
+    }
+  }, [refresh, translate]);
+
+  const launchHost = useCallback(async (deviceId: string): Promise<void> => {
+    setLaunching(deviceId);
+    setDeviceMessage(null);
+    const result = await apiPost<{ ok: true; state: string }>(API_ROUTES.devices, {
+      action: 'launch_host', deviceId, waitMs: 15_000,
+    });
+    if (!mounted.current) return;
+    setLaunching(null);
+    if (result.ok) {
+      setDeviceMessage(`${translate('launchHostDone')} (${result.value.state})`);
       void refresh(true);
     } else {
       setDeviceMessage(`${translate('actionFailed')}: ${result.message}`);
@@ -443,12 +567,32 @@ export function JieZiPanel({ t }: MainPanelProps) {
       <section className="jz-card" aria-labelledby="jz-bridge-title">
         <div className="jz-card-head">
           <h2 id="jz-bridge-title" className="jz-card-title">{translate('bridge')}</h2>
-          {bridge?.version !== null && bridge?.version !== undefined ? <span className="jz-badge">v{bridge.version}</span> : null}
+          <div className="jz-row-side">
+            {bridge?.version !== null && bridge?.version !== undefined ? <span className="jz-badge">v{bridge.version}</span> : null}
+            {bridge?.identityMatch === false ? <span className="jz-badge jz-badge-warn">{translate('bridgeIdentityMismatch')}</span> : null}
+          </div>
         </div>
         {bridge !== null && bridge.available ? (
           <dl className="jz-facts">
             <div><dt>{translate('endpoint')}</dt><dd className="jz-mono jz-break">{bridge.deviceUrl ?? '—'}</dd></div>
-            <div><dt>{translate('bridgeSocket')}</dt><dd className="jz-mono jz-break">{bridge.projectRoot ?? '—'}</dd></div>
+            <div><dt>{translate('bridgeSocket')}</dt><dd className="jz-mono jz-break">{bridge.socketPath ?? '—'}</dd></div>
+            <div><dt>{translate('projectRoot')}</dt><dd className="jz-mono jz-break">{bridge.projectRoot ?? '—'}</dd></div>
+            <div>
+              <dt>{translate('toolchain')}</dt>
+              <dd className="jz-mono jz-break">
+                {bridge.nsh === null
+                  ? translate('nshMissing')
+                  : `nsh ${bridge.nsh.version ?? '?'} · ${bridge.nsh.path ?? ''}`}
+              </dd>
+            </div>
+            <div>
+              <dt>{translate('bridgeInstall')}</dt>
+              <dd className="jz-mono jz-break">
+                {bridge.install === null
+                  ? '—'
+                  : `${bridge.install.version ?? bridge.version ?? '?'} · ${bridge.install.hash?.slice(0, 8) ?? '?'} · ${bridge.install.path}`}
+              </dd>
+            </div>
           </dl>
         ) : (
           <>
@@ -456,6 +600,18 @@ export function JieZiPanel({ t }: MainPanelProps) {
             <p className="jz-hint">{translate('bridgeHint')}</p>
           </>
         )}
+        {bridge !== null && bridge.available && bridge.expectedVersion !== null && bridge.version !== bridge.expectedVersion ? (
+          <p className="jz-warn">{translate('bridgeVersionHint')}: {bridge.version} → {bridge.expectedVersion}</p>
+        ) : null}
+        <div className="jz-actions">
+          <button type="button" className="jz-button" onClick={() => { void restartBridge(); }} disabled={bridgeBusy}>
+            {bridgeBusy ? translate('loading') : translate('restartBridge')}
+          </button>
+          <button type="button" className="jz-button" onClick={() => { void checkEnvironment(); }} disabled={bridgeBusy}>
+            {translate('checkEnvironment')}
+          </button>
+        </div>
+        {bridgeMessage !== null ? <p className="jz-message" role="status">{bridgeMessage}</p> : null}
         {bridge !== null && bridge.available && bridge.capabilities.length > 0 ? (
           <p className="jz-hint">{bridge.capabilities.join(' · ')}</p>
         ) : null}
@@ -494,7 +650,9 @@ export function JieZiPanel({ t }: MainPanelProps) {
                 device={device}
                 t={translate}
                 busy={unpairing === device.deviceId}
+                launching={launching === device.deviceId}
                 onUnpair={(deviceId) => { void unpair(deviceId); }}
+                onLaunch={(deviceId) => { void launchHost(deviceId); }}
               />
             ))}
           </ul>

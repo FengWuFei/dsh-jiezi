@@ -12,7 +12,10 @@ function App() {
         justifyContent: "center",
         alignItems: "center",
         gap: 20,
-        padding: 24,
+        paddingHorizontal: 24,
+        // Safe areas are part of the screen, not the Host chrome.
+        paddingTop: "calc(env(safe-area-inset-top) + 24px)",
+        paddingBottom: "calc(env(safe-area-inset-bottom) + 24px)",
         backgroundColor: dark ? "#000000" : "#f2f2f7",
       }}
     >

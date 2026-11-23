@@ -58,6 +58,7 @@ test('QR pairing sessions, bearer upgrades and automation stay bounded and idemp
     assert.equal(listed.automation, true);
     assert.equal(listed.activeApp.appId, 'com.jiezi.automation.demo');
     assert.equal(listed.targetKind, 'simulator');
+    assert.equal(listed.hostVersion, '1.0');
     assert.equal(listed.tokenHash, undefined);
 
     const observe = await uds(info.socket, 'POST', '/v1/automation', {
@@ -295,6 +296,33 @@ test('QR pairing sessions, bearer upgrades and automation stay bounded and idemp
       assert.equal(deployMessage.payload.releaseId, release.releaseId);
     }
     assert.equal(new Set(deployed.map((entry) => entry.opId)).size, 3);
+
+    // The same (release, device) operation is reused unless force is true;
+    // force must allocate a new id so the Host runs a real install/launch and
+    // can clear a stuck instance or Host alert.
+    const deduplicated = await uds(info.socket, 'POST', '/v1/deploy', {
+      deviceId: pairing.deviceId,
+      releaseId: releases[2].releaseId,
+    });
+    assert.equal(deduplicated.deduplicated, true);
+    assert.equal(deduplicated.reinstalled, false);
+    assert.equal(deduplicated.opId, deployed[2].opId);
+    assert.match(deduplicated.nextAction, /miniapp_reload/);
+    const resentMessage = await device.next('deploy');
+    assert.equal(resentMessage.payload.opId, deduplicated.opId);
+
+    const forced = await uds(info.socket, 'POST', '/v1/deploy', {
+      deviceId: pairing.deviceId,
+      releaseId: releases[2].releaseId,
+      force: true,
+    });
+    assert.equal(forced.deduplicated, false);
+    assert.equal(forced.reinstalled, true);
+    assert.equal(forced.forced, true);
+    assert.notEqual(forced.opId, deployed[2].opId);
+    const forcedMessage = await device.next('deploy');
+    assert.equal(forcedMessage.payload.opId, forced.opId);
+    assert.equal(forcedMessage.payload.releaseId, releases[2].releaseId);
 
     // Evidence from another release is refused rather than attached to this
     // operation (018 plan §4.5).

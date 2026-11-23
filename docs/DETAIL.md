@@ -1,6 +1,6 @@
 # 芥子开发模式（`dsh-jiezi`）
 
-给 DeepSeek Harness 装上「芥子」小程序开发闭环：一个 Agent 预设、十二个 `miniapp_*` 工具、一个自带
+给 DeepSeek Harness 装上「芥子」小程序开发闭环：一个 Agent 预设、十四个 `miniapp_*` 工具、一个自带
 skill，以及一个侧栏面板。预设是**官方标准 Agent 能力 + 芥子工具**，不是封闭的小程序工具集；
 构建、签名与安装协议的实现仍在随包的 `jiezi-bridge` 里，插件只负责调用与监督。
 
@@ -17,9 +17,11 @@ skill，以及一个侧栏面板。预设是**官方标准 Agent 能力 + 芥子
 ## 交付闭环
 
 ```text
+miniapp_doctor → 桥接身份 / nsh / 宿主版本 / 配对 / 自动化一次检查
 miniapp_init   → 新的 TSX 项目 + 计数器测试 + 已放入的 jiezi/native 适配层（只写空目录）
 miniapp_build  → releaseId + sha256（或指向源码行的结构化编译错误）
-miniapp_deploy → opId（pending）
+miniapp_deploy → opId（pending；重复 release 会去重，force/reload 会新建）
+miniapp_reload → 同一 release 的新安装/启动操作（卡住实例或宿主弹窗时用）
 设备           → downloading / verifying / installing / launching
 设备           → 诊断证据 jiezi.diagnostics.v1
 设备           → running | failed（带 evidenceId）
@@ -58,12 +60,17 @@ miniapp_open   → 宿主重启后直接打开已安装的小程序，不重新�
 
 自动化结果始终按数据返回，不会被包装成「成功」。Agent 必须先读状态与错误再声称操作生效；
 宿主弹窗会以 `HOST_ALERT_BLOCKING` 阻止点击/输入，它不属于小程序内容，也不会被列为可点节点。
+插件把它与 `runtimeError` 分开，保留 appId/instanceId 和宿主版本；当宿主低于最低版本时，错误信息
+要求更新宿主或清除弹窗，而不是让 Agent 重复部署同一 release。
 
-`miniapp_device list` 显示已配对设备、Mac 可见的 CoreDevice/模拟器目标和绑定关系；
-`ensure_ready` 启动已初始化的桥接、做一次无令牌的 `dev_* → UDID` 绑定、用固定 argv 拉起
-已安装宿主，并等待真实的「开发者模式 + 自动化」就绪。多个可疑目标时返回
-`host_binding_required`，传一次 `hostDeviceId` 即可；`automation_disabled` 是用户明确撤销，
-不会被覆盖。设备锁定、宿主缺失、iOS 信任被撤销、设备离线都会如实报错。
+`miniapp_devices` 与 `miniapp_device list` 使用同一套设备 schema：`jieziPaired`（桥接配对）、
+`coreDevicePaired`（CoreDevice/Xcode 配对）、`hostRunning`（宿主开发者模式连接）分开表达，
+并带 `hostVersion` / `hostCompatibility` / `boundHostDeviceId` / `nextAction`。`launch_host`
+不需要先有 `deviceId`：按 `hostDeviceId`、已有绑定或唯一可见目标拉起宿主。`ensure_ready`
+启动已初始化的桥接、做一次无令牌的 `dev_* → UDID` 绑定、用固定 argv 拉起已安装宿主，
+并等待真实的「开发者模式 + 自动化」就绪。多个可疑目标时返回 `host_binding_required`；
+`automation_disabled` 是用户明确撤销，不会被覆盖。设备锁定、宿主缺失、iOS 信任被撤销、
+设备离线都会如实报错。
 
 ## 要求
 
@@ -82,8 +89,10 @@ miniapp_open   → 宿主重启后直接打开已安装的小程序，不重新�
 `lib/bridge/cli.js`、仓库里的 `vendor/bridge/src/cli.js`；`timeoutMs` 默认 30000。
 随包 patch 在两行上开启 `autoStart`，让它们共用同一个被监督的 operations 实例。
 
-supervisor 会把运行中的桥接版本与包内 `lib/bridge/package.json` 精确比较：自己拉起的进程版本不符会重启，
-别处启动的桥接不会被杀掉，而是返回 `bridge_version_mismatch`。
+supervisor 不只比较版本：它用包根目录、模块内容哈希与启动时间识别「同版本但旧代码」的桥接。
+自己拉起的进程、报告安装根等于本包的进程、或命令行精确指向本 CLI + 状态目录的进程会被安全重启；
+无法证明归属时返回 `bridge_identity_mismatch`，不会误杀其他 profile 的桥接。启动/每次构建还会重新解析
+失灵的 `nshPath`，并在 `doctor --fix` 中只回写这一项配置。
 
 ## 限制（P0）
 
@@ -104,8 +113,9 @@ npm test
 ```
 
 `npm test` 覆盖：协议与配对载荷校验、工具参数归一化、界面树边界、精确路由表、路由成功/失败 JSON、
-桥接停止时的状态、十二个工具注册、工具级桥接失败、devicectl 新旧格式解析、绑定/启动安全、
-离线自动恢复、真实桥接监督，以及在固定 `nsh` 存在时的实时构建验收。
+桥接停止时的状态、十四个工具注册、工具级桥接失败、强制重装/去重语义、宿主弹窗路由、
+多条件 `expect.checks`、隐藏节点过滤、设备 schema、`launch_host`、桥接身份/重启、devicectl
+新旧格式解析、绑定/启动安全、离线自动恢复、真实桥接监督，以及在固定 `nsh` 存在时的实时构建验收。
 
 侧栏与主面板插槽（`sidebar.panellist` 的 `jiezi`、`main` 的 `jiezi`）通过 Client slot 服务注册，
 但它们的最终外观没有被单元测试渲染验证。

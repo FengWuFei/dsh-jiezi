@@ -181,6 +181,13 @@ contract. Do not assume the adapter forwards every ref command. Read the bundled
 adapter declaration before choosing between these forms; an existing project
 may provide its own wrapper to reuse.
 
+## Layout and visible-state limits
+
+Read [layout-and-accessibility.md](layout-and-accessibility.md) for safe-area and
+`env(keyboard-inset-height)` layout, a visible `Checkbox` indicator recipe,
+decorative accessibility hiding, and the current iOS limitation of
+`textDecorationLine`.
+
 ## Verification
 
 Build first, then deploy and use `miniapp_ui`/`miniapp_action` to verify visible

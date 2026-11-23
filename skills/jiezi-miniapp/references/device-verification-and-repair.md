@@ -4,6 +4,21 @@ Use this reference for the first build/deploy loop, semantic actions, visual
 evidence, or any failure. The tool result is evidence only for the release,
 device, operation, and app instance it names.
 
+## Environment check
+
+Call `miniapp_doctor` once when the bridge, nsh, Host version, pairing, or
+automation state is uncertain. Read `ready`, `blockers`, and `nextActions`
+instead of guessing. `fix: true` rewrites a stale configured nsh path and
+restarts a stale bridge; it never initializes trust, pairs, launches the Host,
+or enables automation.
+
+`miniapp_devices` and `miniapp_device({ action: "list" })` share one schema.
+`jieziPaired`, `coreDevicePaired`, and `hostRunning` are three different facts;
+`hostVersion` plus `hostCompatibility` says whether the Host is old enough to
+show the removed freeze-snapshot alert. When no `deviceId` is paired yet,
+`miniapp_device({ action: "launch_host", hostDeviceId })` starts the installed
+Host before the QR pairing step.
+
 ## Build → deploy → terminal status
 
 1. If no project exists, create it once with
@@ -14,11 +29,16 @@ device, operation, and app instance it names.
 2. Call `miniapp_devices` and choose the intended paired `deviceId`. If the
    bridge/Host is offline, `miniapp_device({ action: "ensure_ready", deviceId })`
    performs supported recovery and verifies actual developer automation.
-   `miniapp_device({ action: "list" })` shows targets/bindings when selection
-   is ambiguous.
+   `launch_host` starts the Host before pairing; `list` shows targets/bindings
+   when selection is ambiguous.
 3. Call `miniapp_deploy({ deviceId, releaseId })`, then immediately
    `miniapp_status({ opId, wait: true })`. This blocks for the terminal record;
    do not end the turn or start a polling loop.
+   A `deduplicated: true` / `reinstalled: false` result did not start a new
+   install. If the old instance is stuck or a Host alert covers it, call
+   `miniapp_reload({ deviceId })` (or deploy with `force: true`) and then wait
+   on the new opId. `miniapp_open` only opens an installed app when none is
+   running; it never restarts a live instance.
 4. `running` means the new instance of that exact build started and no runtime
    error appeared during its startup settle window. It is not interaction or
    visual acceptance. `failed` requires reading its layer and evidence.
@@ -45,7 +65,17 @@ type:   { deviceId, action: "type", target: { testID: "field-title" },
           text: "Example", replace: true, expect: { textEquals: "Example" } }
 scroll: { deviceId, action: "scroll", target: { testID: "list" },
           direction: "up", amount: 0.8 }
+checks: { deviceId, action: "tap", target: { testID: "task-row-1" },
+          expect: { checks: [
+            { testID: "task-progress", textContains: "1 / 3" },
+            { testID: "task-hint", textEquals: "已保存" },
+          ] } }
 ```
+
+`expect.checks` is ANDed and scopes each text assertion to its testID, so one
+action can prove both progress and a hint. `includeHidden: true` is only for
+diagnosing recycled/hidden nodes; hidden duplicates of a visible testID are
+already removed and normal outlines omit hidden nodes.
 
 Prefer a stable `testID`. Otherwise use a fresh alias/path or label+role.
 For repeated content, disambiguate the source with stable data-based testIDs
@@ -54,10 +84,15 @@ rather than guessing. A text-field tap or its testID container can focus it;
 available. Scroll the nearest container or a descendant, then re-observe.
 
 An action request can return data while the action or expectation failed.
-Inspect `state`, `error`, `verification.passed`, inline diagnostics, Host alert,
-and runtime error. A Host alert blocks the page behind it; do not treat it as
-mini-app content. Carry the returned diagnostic cursor forward to avoid
-re-reading old events. Custom gestures are not synthesized.
+Inspect `state`, `error`, `verification.passed`, `snapshotIssues`, inline
+diagnostics, `hostAlert`, `host`, and `runtimeError`. A Host alert blocks the
+page behind it and is not mini-app content: `HOST_ALERT_BLOCKING` with
+`error.category: "host"` means the Host App is the failing layer. Do not rebuild
+or redeploy the mini-app for it. If the Host version is below
+`host.minimumVersion`, ask for a Host update; otherwise handle the alert on the
+phone. Carry the returned diagnostic cursor forward to avoid re-reading old
+events. Custom gestures and arbitrary key presses are not synthesized; focus
+state is visible on the snapshot node (`focused`).
 
 Use `includeFrames: true` when frame/screen geometry matters. `miniapp_screen`
 returns a full-screen PNG path through the DSH computer, including Host chrome
@@ -79,6 +114,7 @@ another build's earlier error to the current instance.
 | `load` | Inspect entry, imports, assets, loading and runtime compatibility evidence |
 | `runtime` | Read newest scoped/action-time errors; repair source and redeploy |
 | `host-component` | Check actual Host/wire support; use a supported fallback or stop for a Host release |
+| `HOST_ALERT_BLOCKING` | Host layer, not app source: update the Host or dismiss the alert; do not redeploy the unchanged mini-app |
 | `refused` | Inspect capability/signature/permission denial; reduce or correctly declare use |
 | `automation_disabled` | Stop; only the user can explicitly restore automation |
 | `host_binding_required` | List targets and supply the exact `hostDeviceId`; never guess |

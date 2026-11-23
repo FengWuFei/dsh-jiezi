@@ -76,7 +76,11 @@ function failureFor(error: Error & { code?: unknown }, stdout: string, stderr: s
   const message = stringOrNull(record?.message, MAX_CHECK_MESSAGE)
     ?? (stderr.trim() || stdout.trim() || error.message).slice(-MAX_CHECK_MESSAGE);
   if (code === 'build_failed' && /\bnsh\b/i.test(message)) {
-    return new JieZiError('nsh_missing', message, { retryable: false });
+    return new JieZiError(
+      'nsh_missing',
+      `${message} Restart the bridge from the JieZi panel after fixing the toolchain; miniapp_doctor({ fix: true }) can rewrite a stale configured path.`,
+      { retryable: false },
+    );
   }
   return new JieZiError('setup_failed', message, { retryable: false });
 }
@@ -108,6 +112,7 @@ function normalizeReport(raw: Record<string, unknown>, cliPath: string): SetupRe
   const state = asObject(raw.state);
   const socket = asObject(raw.socket);
   const nsh = asObject(raw.nsh);
+  const install = asObject(raw.install);
   const apple = asObject(raw.apple);
   const candidates = Array.isArray(nsh?.candidates)
     ? nsh.candidates.filter((entry): entry is string => typeof entry === 'string').slice(0, 12)
@@ -125,6 +130,11 @@ function normalizeReport(raw: Record<string, unknown>, cliPath: string): SetupRe
     arch: stringOrNull(raw.arch, 32) ?? process.arch,
     node: stringOrNull(raw.node, 64) ?? process.version,
     cli: { path: stringOrNull(cli?.path, 2048) ?? cliPath, available: true },
+    install: install === null ? null : {
+      path: stringOrNull(install.path, 2048) ?? '',
+      version: stringOrNull(install.version, 64),
+      hash: stringOrNull(install.packageHash, 128),
+    },
     state: {
       dir: stringOrNull(state?.dir, 2048) ?? '',
       initialized: boolean(state?.initialized),
@@ -135,10 +145,15 @@ function normalizeReport(raw: Record<string, unknown>, cliPath: string): SetupRe
       path: stringOrNull(socket?.path, 2048) ?? '',
       running: boolean(socket?.running),
       version: stringOrNull(socket?.version, 64),
+      startedAt: stringOrNull(socket?.startedAt, 64),
+      identityMatch: typeof socket?.identityMatch === 'boolean' ? socket.identityMatch : null,
+      stale: typeof socket?.stale === 'boolean' ? socket.stale : null,
+      nsh: stringOrNull(socket?.nsh, 2048),
       error: stringOrNull(socket?.error, 2048),
     },
     nsh: {
       found: boolean(nsh?.found),
+      configured: stringOrNull(nsh?.configured, 2048),
       path: stringOrNull(nsh?.path, 2048),
       version: stringOrNull(nsh?.version, 256),
       error: stringOrNull(nsh?.error, 2048),
@@ -152,6 +167,10 @@ function normalizeReport(raw: Record<string, unknown>, cliPath: string): SetupRe
     },
     checks,
     notes,
+    ...(raw.fixed === undefined ? {} : { fixed: boolean(raw.fixed) }),
+    ...(Array.isArray(raw.fixes)
+      ? { fixes: raw.fixes.filter((entry): entry is string => typeof entry === 'string').slice(0, 8).map((entry) => entry.slice(0, 500)) }
+      : {}),
     checkedAt: stringOrNull(raw.checkedAt, 64) ?? new Date().toISOString(),
   };
 }
@@ -168,9 +187,16 @@ function missingCliReport(settings: BridgeSettings): SetupReport {
     arch: process.arch,
     node: process.version,
     cli: { path: settings.bridgeCliPath, available: false },
+    install: null,
     state: { dir: settings.stateDir, initialized, configPath, keysPresent: keys },
-    socket: { path: settings.socketPath, running: false, version: null, error: missing },
-    nsh: { found: false, path: null, version: null, error: 'not checked without the bridge CLI', candidates: [], candidateCount: 0 },
+    socket: {
+      path: settings.socketPath, running: false, version: null, startedAt: null,
+      identityMatch: null, stale: null, nsh: null, error: missing,
+    },
+    nsh: {
+      found: false, configured: null, path: null, version: null,
+      error: 'not checked without the bridge CLI', candidates: [], candidateCount: 0,
+    },
     apple: { devicectl: false, simctl: false, note: missing },
     checks: [
       { id: 'bridge-cli', ok: false, message: missing },
@@ -185,12 +211,14 @@ function missingCliReport(settings: BridgeSettings): SetupReport {
 }
 
 /** Read-only setup report; safe to call on every panel open. */
-export async function inspectSetup(settings: BridgeSettings): Promise<SetupReport> {
+export async function inspectSetup(settings: BridgeSettings, options: { fix?: boolean } = {}): Promise<SetupReport> {
   if (!existsSync(settings.bridgeCliPath)) return missingCliReport(settings);
   try {
+    const args = ['doctor', '--state-dir', settings.stateDir];
+    if (options.fix === true) args.push('--fix');
     const raw = await runBridgeJson(
       settings.bridgeCliPath,
-      ['doctor', '--state-dir', settings.stateDir],
+      args,
       DOCTOR_TIMEOUT_MS,
     );
     return normalizeReport(raw, settings.bridgeCliPath);
@@ -199,6 +227,15 @@ export async function inspectSetup(settings: BridgeSettings): Promise<SetupRepor
     const message = error instanceof Error ? error.message : String(error);
     throw new JieZiError('setup_failed', message.slice(0, MAX_CHECK_MESSAGE), { retryable: false });
   }
+}
+
+/**
+ * Apply the bridge's one safe repair (a stale nsh path) and return the report.
+ * Trust material, pairing, and processes stay untouched; the caller decides
+ * whether a bridge restart follows.
+ */
+export async function repairSetup(settings: BridgeSettings): Promise<SetupReport> {
+  return inspectSetup(settings, { fix: true });
 }
 
 function summarizeInit(raw: Record<string, unknown>): NonNullable<SetupInitializeResult['init']> {

@@ -87,7 +87,7 @@ export function resolveNsh(explicit) {
   if (found === null) {
     throw new ProtocolError(
       'build_failed',
-      `nsh is not executable; checked ${nshCandidates(explicit).slice(0, 8).join(', ')}. Pass --nsh or set NSH_TOOLCHAIN`,
+      `nsh is not executable; checked ${nshCandidates(explicit).slice(0, 8).join(', ')}. Install the packaged toolchain, pass --nsh, or run \`jiezi-bridge doctor --fix\` to rewrite a stale configured path; restart the bridge after either change.`,
     );
   }
   return found;

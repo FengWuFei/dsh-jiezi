@@ -112,7 +112,7 @@ test('host routes pair, summarize, deploy, diagnose, and automate', { timeout: 2
     const { operations, routes, ctx } = await contextFor(bridge.socketPath);
     // Connection keys its exact Fetch registry by path and rejects a repeat,
     // so every path must appear once with the union of its methods.
-    assert.equal(routes.length, 9);
+    assert.equal(routes.length, 10);
     assert.equal(new Set(routes.map((route) => route.path)).size, routes.length);
     assert.deepEqual(
       routes.find((route) => route.path === '/api/jiezi/pairing').methods,
@@ -151,6 +151,9 @@ test('host routes pair, summarize, deploy, diagnose, and automate', { timeout: 2
     const statusBody = await status.json();
     assert.equal(statusBody.bridge.available, true);
     assert.equal(statusBody.bridge.version, '0.2.0');
+    assert.equal(typeof statusBody.bridge.socketPath, 'string');
+    assert.equal(statusBody.bridge.nsh, null);
+    assert.equal(statusBody.bridge.expectedVersion, '0.3.4');
     assert.equal(statusBody.setup.initialized, false);
     assert.equal(statusBody.setup.bridgeCliAvailable, true);
     assert.equal(statusBody.devices.length, 1);
@@ -271,7 +274,7 @@ test('apply registers each exact path once against a path-unique registry', { ti
   };
   try {
     apply(ctx, { socketPath: bridge.socketPath, timeoutMs: 2_000 });
-    assert.equal(registered.size, 9);
+    assert.equal(registered.size, 10);
     for (const path of Object.values(API_ROUTES)) assert.ok(registered.has(path), `${path} registered`);
   } finally {
     for (const cleanup of cleanups.reverse()) cleanup();

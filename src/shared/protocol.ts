@@ -27,6 +27,7 @@ export const API_ROUTES = {
   operation: `${API_PREFIX}/operation`,
   diagnostics: `${API_PREFIX}/diagnostics`,
   automation: `${API_PREFIX}/automation`,
+  bridge: `${API_PREFIX}/bridge`,
   unpair: `${API_PREFIX}/unpair`,
 } as const;
 
@@ -70,6 +71,47 @@ export interface PairingPayload {
   expiresAt: string;
 }
 
+/**
+ * Advisory minimum Host version. 0.1.x is the known legacy freeze-snapshot
+ * implementation; change this one constant when the Host package chooses the
+ * version of its next release. Compatibility is a warning, never a hard gate.
+ */
+export const MIN_HOST_VERSION = '0.2.0';
+
+/** How a device's Host version relates to the supported contract. */
+export type HostCompatibility = 'supported' | 'outdated' | 'unknown';
+
+/** Compare dotted numeric versions; missing components are zero. */
+export function compareVersions(left: string, right: string): number {
+  const parts = (value: string): number[] => value
+    .split(/[^0-9]+/u)
+    .filter((item) => item.length > 0)
+    .slice(0, 4)
+    .map((item) => Number(item) || 0);
+  const a = parts(left);
+  const b = parts(right);
+  const length = Math.max(a.length, b.length, 3);
+  for (let index = 0; index < length; index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference !== 0) return difference < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+/** Advisory Host compatibility; unknown does not block a deployment. */
+export function hostCompatibility(version: string | null): HostCompatibility {
+  if (version === null || version.length === 0) return 'unknown';
+  return compareVersions(version, MIN_HOST_VERSION) >= 0 ? 'supported' : 'outdated';
+}
+
+/** One Host version line shared by tools, panel and doctor. */
+export interface HostInfo {
+  deviceId: string;
+  version: string | null;
+  minimumVersion: string;
+  compatibility: HostCompatibility;
+}
+
 /** Panel view of one pairing session: the payload plus its live state. */
 export interface PairingView {
   payload: PairingPayload | null;
@@ -86,6 +128,17 @@ export interface DeviceView {
   pairedAt: string | null;
   lastSeenAt: string | null;
   online: boolean;
+  /** Bridge pairing: this device belongs to the JieZi bridge. */
+  jieziPaired: boolean;
+  /** CoreDevice/Xcode pairing, when a matching target is visible. */
+  coreDevicePaired: boolean | null;
+  /** The Host App currently has a live developer-mode connection. */
+  hostRunning: boolean;
+  hostVersion: string | null;
+  hostMinimumVersion: string;
+  hostCompatibility: HostCompatibility;
+  boundHostDeviceId: string | null;
+  nextAction: string | null;
   targetKind: 'physical' | 'simulator' | null;
   revocation: { developerMode: boolean; automation: boolean; updatedAt: string | null } | null;
   developerMode: boolean;
@@ -119,7 +172,7 @@ export interface AutomationView {
   appId: string | null;
   instanceId: string | null;
   nodeCount: number;
-  error: { code: string; message: string } | null;
+  error: { code: string; message: string; category?: 'device' | 'host' | 'runtime' | 'verification' } | null;
   hostAlert: AutomationAlert | null;
   updatedAt: string | null;
 }
@@ -158,6 +211,9 @@ export interface AutomationSnapshot {
   screen: { width: number; height: number } | null;
   nodes: SnapshotNode[];
   truncated: boolean;
+  visibleNodeCount: number;
+  hiddenNodeCount: number;
+  duplicateTestIDs: string[];
 }
 
 /** One diagnostic event returned inline with an automation result. */
@@ -182,9 +238,14 @@ export interface StatusView {
   bridge: {
     available: boolean;
     version: string | null;
+    expectedVersion: string | null;
+    identityMatch: boolean | null;
     bridgeName: string | null;
     deviceUrl: string | null;
+    socketPath: string | null;
     projectRoot: string | null;
+    nsh: { path: string | null; version: string | null } | null;
+    install: { path: string; version: string | null; hash: string | null } | null;
     capabilities: string[];
     error: { code: string; message: string } | null;
   };
@@ -217,10 +278,21 @@ export interface SetupReport {
   arch: string;
   node: string;
   cli: { path: string; available: boolean };
+  install: { path: string; version: string | null; hash: string | null } | null;
   state: { dir: string; initialized: boolean; configPath: string; keysPresent: boolean };
-  socket: { path: string; running: boolean; version: string | null; error: string | null };
+  socket: {
+    path: string;
+    running: boolean;
+    version: string | null;
+    startedAt: string | null;
+    identityMatch: boolean | null;
+    stale: boolean | null;
+    nsh: string | null;
+    error: string | null;
+  };
   nsh: {
     found: boolean;
+    configured: string | null;
     path: string | null;
     version: string | null;
     error: string | null;
@@ -230,6 +302,8 @@ export interface SetupReport {
   apple: { devicectl: boolean; simctl: boolean; note: string | null };
   checks: SetupCheck[];
   notes: string[];
+  fixed?: boolean;
+  fixes?: string[];
   checkedAt: string;
 }
 
@@ -360,13 +434,16 @@ export function parseBuildArgs(args: unknown): BuildArgs {
 export interface DeployArgs {
   deviceId: string;
   releaseId: string;
+  force: boolean;
 }
 
 export function parseDeployArgs(args: unknown): DeployArgs {
   const value = asRecord(args, 'arguments');
+  if (value.force !== undefined && typeof value.force !== 'boolean') throw invalid('force must be a boolean');
   return {
     deviceId: requireString(value.deviceId, 'deviceId', 256),
     releaseId: requireString(value.releaseId, 'releaseId', 256),
+    force: value.force === true,
   };
 }
 
@@ -453,7 +530,7 @@ export function parseScreenArgs(args: unknown): ScreenArgs {
 }
 
 export interface DeviceOperationArgs {
-  action: 'list' | 'ensure_ready';
+  action: 'list' | 'ensure_ready' | 'launch_host';
   deviceId?: string;
   hostDeviceId?: string;
   rebind: boolean;
@@ -462,8 +539,8 @@ export interface DeviceOperationArgs {
 
 export function parseDeviceOperationArgs(args: unknown): DeviceOperationArgs {
   const value = asRecord(args, 'arguments');
-  if (value.action !== 'list' && value.action !== 'ensure_ready') {
-    throw invalid('action must be list or ensure_ready');
+  if (value.action !== 'list' && value.action !== 'ensure_ready' && value.action !== 'launch_host') {
+    throw invalid('action must be list, ensure_ready, or launch_host');
   }
   const result: DeviceOperationArgs = {
     action: value.action,
@@ -493,11 +570,20 @@ export interface AutomationTarget {
 }
 
 /** Post-action expectation. */
-export interface AutomationExpect {
-  visibleTestID?: string;
-  visibleLabel?: string;
+/** One scoped post-action condition; text assertions read only this testID. */
+export interface AutomationCheck {
+  testID?: string;
+  label?: string;
   textContains?: string;
   textEquals?: string;
+  focused?: boolean;
+}
+
+/** Post-action expectation: legacy fields plus an ANDed list of scoped checks. */
+export interface AutomationExpect extends AutomationCheck {
+  visibleTestID?: string;
+  visibleLabel?: string;
+  checks?: AutomationCheck[];
 }
 
 export type AutomationAction = 'observe' | 'tap' | 'type' | 'scroll';
@@ -518,6 +604,7 @@ export interface AutomationArgs {
   direction?: 'up' | 'down' | 'left' | 'right';
   amount?: number;
   includeFrames?: boolean;
+  includeHidden?: boolean;
 }
 
 function parseTarget(value: unknown): AutomationTarget {
@@ -537,6 +624,23 @@ function parseTarget(value: unknown): AutomationTarget {
   return target;
 }
 
+function parseCheck(value: unknown, field: string): AutomationCheck {
+  const record = asRecord(value, field);
+  const check: AutomationCheck = {};
+  for (const key of ['testID', 'label', 'textContains', 'textEquals'] as const) {
+    const item = optionalString(record[key], `${field}.${key}`, 512);
+    if (item !== undefined) check[key] = item;
+  }
+  if (record.focused !== undefined) {
+    if (typeof record.focused !== 'boolean') throw invalid(`${field}.focused must be a boolean`);
+    check.focused = record.focused;
+  }
+  if (Object.keys(check).length === 0) {
+    throw invalid(`${field} requires testID, label, textContains, textEquals, or focused`);
+  }
+  return check;
+}
+
 function parseExpect(value: unknown): AutomationExpect | undefined {
   if (value === undefined || value === null) return undefined;
   const record = asRecord(value, 'expect');
@@ -545,7 +649,15 @@ function parseExpect(value: unknown): AutomationExpect | undefined {
     const item = optionalString(record[key], `expect.${key}`, 512);
     if (item !== undefined) expect[key] = item;
   }
-  if (Object.keys(expect).length === 0) throw invalid('expect requires visibleTestID, visibleLabel, textContains, or textEquals');
+  if (record.checks !== undefined) {
+    if (!Array.isArray(record.checks) || record.checks.length === 0 || record.checks.length > 8) {
+      throw invalid('expect.checks must be an array of 1 to 8 checks');
+    }
+    expect.checks = record.checks.map((entry, index) => parseCheck(entry, `expect.checks[${index}]`));
+  }
+  if (Object.keys(expect).length === 0) {
+    throw invalid('expect requires visibleTestID, visibleLabel, textContains, textEquals, or checks');
+  }
   return expect;
 }
 
@@ -573,6 +685,10 @@ export function parseAutomationArgs(action: AutomationAction, args: unknown): Au
   if (value.includeFrames !== undefined) {
     if (typeof value.includeFrames !== 'boolean') throw invalid('includeFrames must be a boolean');
     result.includeFrames = value.includeFrames;
+  }
+  if (value.includeHidden !== undefined) {
+    if (typeof value.includeHidden !== 'boolean') throw invalid('includeHidden must be a boolean');
+    result.includeHidden = value.includeHidden;
   }
   if (action === 'tap' || action === 'type' || action === 'scroll') {
     result.target = parseTarget(value.target);
@@ -680,12 +796,21 @@ export function deviceView(value: unknown): DeviceView {
   const revocation = record.revocation !== null && typeof record.revocation === 'object' && !Array.isArray(record.revocation)
     ? record.revocation as Record<string, unknown>
     : null;
+  const hostVersion = textOrNull(record.hostVersion ?? record.appVersion, 64);
   return {
     deviceId: text(record.deviceId, 256),
     name: text(record.name, 128) || text(record.deviceName, 128) || 'iPhone',
     pairedAt: textOrNull(record.pairedAt, 64),
     lastSeenAt: textOrNull(record.lastSeenAt, 64),
     online: bool(record.online),
+    jieziPaired: true,
+    coreDevicePaired: typeof record.coreDevicePaired === 'boolean' ? record.coreDevicePaired : null,
+    hostRunning: typeof record.hostRunning === 'boolean' ? record.hostRunning : bool(record.online),
+    hostVersion,
+    hostMinimumVersion: MIN_HOST_VERSION,
+    hostCompatibility: hostCompatibility(hostVersion),
+    boundHostDeviceId: textOrNull(record.boundHostDeviceId, 128),
+    nextAction: textOrNull(record.nextAction, 500),
     targetKind: record.targetKind === 'physical' || record.targetKind === 'simulator' ? record.targetKind : null,
     revocation: revocation === null ? null : {
       developerMode: bool(revocation.developerMode),
@@ -713,7 +838,14 @@ export function deploymentView(value: unknown): DeploymentView {
 }
 
 /** Map one automation result into the bounded panel shape. */
-export function automationView(value: unknown, fallback: { requestId: string; opId: string | null; deviceId: string; action: AutomationAction }): AutomationView {
+export function automationView(value: unknown, fallback: {
+  requestId: string;
+  opId: string | null;
+  deviceId: string;
+  action: AutomationAction;
+  appId?: string | null;
+  instanceId?: string | null;
+}): AutomationView {
   const record = asRecord(value, 'automation');
   const snapshot = record.snapshot === null || record.snapshot === undefined ? null : asRecord(record.snapshot, 'snapshot');
   const nodes = snapshot && Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
@@ -724,10 +856,17 @@ export function automationView(value: unknown, fallback: { requestId: string; op
     deviceId: text(record.deviceId, 256) || fallback.deviceId,
     action: record.action === 'tap' || record.action === 'type' || record.action === 'scroll' ? record.action : fallback.action,
     state: text(record.state, 32) || 'pending',
-    appId: textOrNull(snapshot?.appId ?? record.appId, 128),
-    instanceId: textOrNull(snapshot?.instanceId ?? record.instanceId, 128),
+    appId: textOrNull(snapshot?.appId ?? record.appId, 128) ?? fallback.appId ?? null,
+    instanceId: textOrNull(snapshot?.instanceId ?? record.instanceId, 128) ?? fallback.instanceId ?? null,
     nodeCount: nodes.length,
-    error: errorRecord === null ? null : { code: text(errorRecord.code, 64), message: text(errorRecord.message, 500) },
+    error: errorRecord === null ? null : {
+      code: text(errorRecord.code, 64),
+      message: text(errorRecord.message, 500),
+      ...(errorRecord.category === 'device' || errorRecord.category === 'host'
+        || errorRecord.category === 'runtime' || errorRecord.category === 'verification'
+        ? { category: errorRecord.category }
+        : {}),
+    },
     hostAlert: automationAlert(record.hostAlert),
     updatedAt: textOrNull(record.updatedAt, 64),
   };
@@ -748,9 +887,11 @@ export function automationAlert(value: unknown): AutomationAlert | null {
 
 /**
  * Check a post-action expectation against the fresh bounded snapshot.
- * Conditions are ANDed; only visible nodes participate. The bridge and the
- * device do not evaluate expectations, so this shared layer is the single
- * place both the panel and the Agent get a consistent pass/fail.
+ * Conditions are ANDed; only visible nodes participate. Legacy fields remain
+ * for compatibility. `checks` evaluates several independently scoped
+ * conditions, which is how one action asserts both a progress value and a hint
+ * text. The bridge and device do not evaluate expectations, so this shared
+ * layer is the single place both the panel and the Agent agree on pass/fail.
  */
 export function evaluateExpectation(
   expect: AutomationExpect | undefined,
@@ -760,42 +901,107 @@ export function evaluateExpectation(
   if (snapshot === null) return { passed: false, reason: '动作后没有返回页面快照' };
   const visible = snapshot.nodes.filter((node) => node.visible);
   const failures: string[] = [];
+  const contains = (node: SnapshotNode, text: string): boolean =>
+    (node.label ?? '').includes(text) || (node.value ?? '').includes(text);
+  const equals = (node: SnapshotNode, text: string): boolean =>
+    node.label === text || node.value === text;
+
   if (expect.visibleTestID !== undefined
     && !visible.some((node) => node.testID === expect.visibleTestID)) {
     failures.push(`可见元素 testID=${expect.visibleTestID} 不存在`);
   }
-  // Text assertions scoped to the expected testID read that node's own text;
-  // without one they may match any visible node. This prevents a parent
-  // aggregate label ("pressed 0 +1") from satisfying a check aimed at the
-  // count node ("0").
-  const textScope = expect.visibleTestID === undefined
-    ? visible
-    : visible.filter((node) => node.testID === expect.visibleTestID);
   if (expect.visibleLabel !== undefined
     && !visible.some((node) => node.label === expect.visibleLabel)) {
     failures.push(`可见元素 label=${JSON.stringify(expect.visibleLabel)} 不存在`);
   }
+  // Legacy text assertions scope to visibleTestID when present; otherwise any
+  // visible node may satisfy them. This prevents a parent aggregate label
+  // ("pressed 0 +1") from satisfying a check aimed at the count node ("0").
+  const legacyScope = expect.visibleTestID === undefined
+    ? visible
+    : visible.filter((node) => node.testID === expect.visibleTestID);
   if (expect.textContains !== undefined
-    && !textScope.some((node) => (node.label ?? '').includes(expect.textContains as string)
-      || (node.value ?? '').includes(expect.textContains as string))) {
+    && !legacyScope.some((node) => contains(node, expect.textContains as string))) {
     failures.push(`${expect.visibleTestID === undefined ? '没有可见文本' : `${expect.visibleTestID} 的文本不`}包含 ${JSON.stringify(expect.textContains)}`);
   }
   if (expect.textEquals !== undefined
-    && !textScope.some((node) => node.label === expect.textEquals || node.value === expect.textEquals)) {
+    && !legacyScope.some((node) => equals(node, expect.textEquals as string))) {
     failures.push(`${expect.visibleTestID === undefined ? '没有可见文本' : `${expect.visibleTestID} 的文本不`}等于 ${JSON.stringify(expect.textEquals)}`);
   }
+
+  for (const [index, check] of (expect.checks ?? []).entries()) {
+    const label = `检查 ${index + 1}`;
+    if (check.testID !== undefined && !visible.some((node) => node.testID === check.testID)) {
+      failures.push(`${label}: 可见元素 testID=${check.testID} 不存在`);
+    }
+    if (check.label !== undefined && !visible.some((node) => node.label === check.label)) {
+      failures.push(`${label}: 可见元素 label=${JSON.stringify(check.label)} 不存在`);
+    }
+    if (check.focused !== undefined) {
+      const focused = visible.some((node) => node.focused);
+      if (check.focused !== focused) {
+        failures.push(`${label}: 焦点状态应为 ${check.focused ? '有' : '无'}`);
+      }
+    }
+    const scope = check.testID !== undefined
+      ? visible.filter((node) => node.testID === check.testID)
+      : check.label !== undefined
+        ? visible.filter((node) => node.label === check.label)
+        : visible;
+    if (check.textContains !== undefined && !scope.some((node) => contains(node, check.textContains as string))) {
+      failures.push(`${label}: ${check.testID === undefined ? '没有可见文本' : `${check.testID} 的文本不`}包含 ${JSON.stringify(check.textContains)}`);
+    }
+    if (check.textEquals !== undefined && !scope.some((node) => equals(node, check.textEquals as string))) {
+      failures.push(`${label}: ${check.testID === undefined ? '没有可见文本' : `${check.testID} 的文本不`}等于 ${JSON.stringify(check.textEquals)}`);
+    }
+  }
+
   return failures.length === 0
     ? { passed: true, reason: null }
     : { passed: false, reason: failures.join('；') };
 }
 
 /** Read the bounded semantic snapshot inside one automation result. */
-export function automationSnapshot(value: unknown): AutomationSnapshot | null {  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+export function automationSnapshot(value: unknown): AutomationSnapshot | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   const snapshot = record.snapshot;
   if (snapshot === null || snapshot === undefined || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
   const raw = snapshot as Record<string, unknown>;
   const nodes = Array.isArray(raw.nodes) ? raw.nodes.slice(0, MAX_OUTLINE_NODES) : [];
+  const mapped: SnapshotNode[] = nodes.map((entry) => {
+    const node = entry !== null && typeof entry === 'object' && !Array.isArray(entry) ? entry as Record<string, unknown> : {};
+    const frame = node.frame !== null && typeof node.frame === 'object' && !Array.isArray(node.frame)
+      ? node.frame as Record<string, unknown>
+      : null;
+    return {
+      alias: textOrNull(node.alias, 16),
+      testID: textOrNull(node.testID, 256),
+      label: textOrNull(node.label, 512),
+      role: textOrNull(node.role, 64),
+      value: textOrNull(node.value, 512),
+      frame: frame === null ? null : {
+        x: Number(frame.x) || 0,
+        y: Number(frame.y) || 0,
+        width: Math.max(0, Number(frame.width) || 0),
+        height: Math.max(0, Number(frame.height) || 0),
+      },
+      enabled: node.enabled !== false,
+      visible: node.visible !== false,
+      focused: node.focused === true,
+      path: textOrNull(node.path, 256),
+    };
+  });
+  // A recycled virtualized row can survive in the accessibility tree as a
+  // hidden node with the same testID as a visible row. Drop that hidden
+  // duplicate; never drop a visible duplicate, which is a real app bug.
+  const visibleIDs = new Set(mapped.filter((node) => node.visible && node.testID !== null).map((node) => node.testID as string));
+  const deduped = mapped.filter((node) => node.visible || node.testID === null || !visibleIDs.has(node.testID));
+  const counts = new Map<string, number>();
+  for (const node of deduped) {
+    if (node.visible && node.testID !== null) counts.set(node.testID, (counts.get(node.testID) ?? 0) + 1);
+  }
+  const duplicateTestIDs = [...counts.entries()].filter(([, count]) => count > 1).map(([testID]) => testID).slice(0, 8);
   return {
     snapshotId: textOrNull(raw.snapshotId, 128),
     appId: textOrNull(raw.appId, 128),
@@ -809,30 +1015,11 @@ export function automationSnapshot(value: unknown): AutomationSnapshot | null { 
           height: Math.max(0, Number((raw.screen as Record<string, unknown>).height) || 0),
         }
       : null,
-    nodes: nodes.map((entry) => {
-      const node = entry !== null && typeof entry === 'object' && !Array.isArray(entry) ? entry as Record<string, unknown> : {};
-      const frame = node.frame !== null && typeof node.frame === 'object' && !Array.isArray(node.frame)
-        ? node.frame as Record<string, unknown>
-        : null;
-      return {
-        alias: textOrNull(node.alias, 16),
-        testID: textOrNull(node.testID, 256),
-        label: textOrNull(node.label, 512),
-        role: textOrNull(node.role, 64),
-        value: textOrNull(node.value, 512),
-        frame: frame === null ? null : {
-          x: Number(frame.x) || 0,
-          y: Number(frame.y) || 0,
-          width: Math.max(0, Number(frame.width) || 0),
-          height: Math.max(0, Number(frame.height) || 0),
-        },
-        enabled: node.enabled !== false,
-        visible: node.visible !== false,
-        focused: node.focused === true,
-        path: textOrNull(node.path, 256),
-      };
-    }),
+    nodes: deduped,
     truncated: raw.truncated === true || (Array.isArray(raw.nodes) && raw.nodes.length > nodes.length),
+    visibleNodeCount: deduped.filter((node) => node.visible).length,
+    hiddenNodeCount: deduped.filter((node) => !node.visible).length,
+    duplicateTestIDs,
   };
 }
 
@@ -871,12 +1058,16 @@ function quote(value: string | null, max = 60): string {
 /**
  * Render a compact, bounded outline of one semantic snapshot. The line-per-node
  * form keeps a tool result small while preserving the selectors a follow-up tap
- * needs (alias, testID, label, role, path).
+ * needs (alias, testID, label, role, path). Hidden nodes are omitted by default
+ * because a virtualized list can leave recycled rows in the accessibility tree;
+ * `visibleOnly: false` opts back in.
  */
 export function formatOutline(
   snapshot: AutomationSnapshot,
-  options: { frames?: boolean } = {},
+  options: { frames?: boolean; visibleOnly?: boolean } = {},
 ): string {
+  const visibleOnly = options.visibleOnly !== false;
+  const nodes = visibleOnly ? snapshot.nodes.filter((node) => node.visible) : snapshot.nodes;
   const header = [
     `snapshot ${snapshot.snapshotId ?? '(none)'}`,
     `app=${snapshot.appId ?? '?'}`,
@@ -885,10 +1076,13 @@ export function formatOutline(
     options.frames === true && snapshot.screen != null
       ? `screen=${formatNumber(snapshot.screen.width)}x${formatNumber(snapshot.screen.height)}`
       : null,
-    `nodes=${snapshot.nodes.length}${snapshot.truncated ? ' (truncated)' : ''}`,
+    `nodes=${nodes.length}${visibleOnly && (snapshot.hiddenNodeCount ?? 0) > 0 ? ` (${snapshot.hiddenNodeCount} hidden omitted)` : ''}${snapshot.truncated ? ' (truncated)' : ''}`,
+    (snapshot.duplicateTestIDs ?? []).length > 0
+      ? `duplicateTestIDs=${(snapshot.duplicateTestIDs ?? []).map((item) => quote(item, 80)).join(',')}`
+      : null,
   ].filter((item): item is string => item !== null).join(' ');
   const lines = [header];
-  for (const [index, node] of snapshot.nodes.entries()) {
+  for (const [index, node] of nodes.entries()) {
     const parts: string[] = [`[${index}]`];
     if (node.alias) parts.push(`alias=${node.alias}`);
     if (node.testID) parts.push(`testID=${quote(node.testID, 80)}`);
@@ -906,7 +1100,7 @@ export function formatOutline(
     if (node.path) parts.push(`path=${node.path}`);
     const line = parts.join(' ');
     if (lines.join('\n').length + line.length + 1 > MAX_OUTLINE_CHARS) {
-      lines.push(`… ${snapshot.nodes.length - index} more nodes omitted`);
+      lines.push(`… ${nodes.length - index} more nodes omitted`);
       break;
     }
     lines.push(line);

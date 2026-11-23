@@ -13,6 +13,7 @@ import {
   MAX_AUTOMATION_HISTORY,
   MAX_DEPLOYMENTS,
   MAX_DEVICES,
+  MIN_HOST_VERSION,
   automationAlert,
   automationDiagnostics,
   automationSnapshot,
@@ -22,6 +23,7 @@ import {
   deviceView,
   evaluateExpectation,
   formatOutline,
+  hostCompatibility,
   parseAutomationArgs,
   parseBuildArgs,
   parseCaptureArgs,
@@ -32,6 +34,7 @@ import {
   parseOpenArgs,
   parsePairingCreateArgs,
   parseScreenArgs,
+  optionalString,
   requireAction,
   requireString,
   validatePairingPayload,
@@ -45,6 +48,7 @@ import {
   type CaptureArgs,
   type DeploymentView,
   type DeviceView,
+  type HostInfo,
   type OpenArgs,
   type PairingPayload,
   type PairingView,
@@ -57,10 +61,17 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { JieZiError } from '../shared/errors.js';
-import { BridgeClient, resolveBridgeSettings, type BridgeSettings } from './bridge-client.js';
+import {
+  BridgeClient,
+  bridgeIdentityFor,
+  bundledBridgeVersion,
+  resolveBridgeSettings,
+  type BridgeIdentity,
+  type BridgeSettings,
+} from './bridge-client.js';
 import { BridgeSupervisor } from './bridge-supervisor.js';
-import { initializeSetup, inspectSetup } from './setup.js';
-import { AppleDeviceHost, type DeviceHost } from './apple-device-host.js';
+import { initializeSetup, inspectSetup, repairSetup } from './setup.js';
+import { AppleDeviceHost, type DeviceHost, type HostDeviceTarget } from './apple-device-host.js';
 
 /** One automation call's bounded result. */
 export interface AutomationResult {
@@ -75,13 +86,19 @@ export interface AutomationResult {
   snapshotId: string | null;
   nodeCount: number;
   outline: string | null;
-  error: { code: string; message: string } | null;
+  error: { code: string; message: string; category?: 'device' | 'host' | 'runtime' | 'verification' } | null;
   verification: { passed: boolean; reason: string | null };
   diagnostics: AutomationDiagnostics | null;
   diagnosticCursor: number | null;
   hostAlert: AutomationAlert | null;
+  host: HostInfo;
   runtimeError: AutomationDiagnosticEvent | null;
   deduplicated: boolean;
+  snapshotIssues: {
+    visibleNodeCount: number;
+    hiddenNodeCount: number;
+    duplicateTestIDs: string[];
+  };
 }
 
 interface PairingMemory {
@@ -95,6 +112,76 @@ function sleep(ms: number): Promise<void> {
 
 function isAutomationReady(device: DeviceView): boolean {
   return device.online && device.developerMode && device.automation;
+}
+
+/** Human-readable failure text for warnings; never leaks a stack. */
+function failureMessage(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 500);
+}
+
+/** Host version projection used by tools and doctor. */
+function hostOf(device: DeviceView): HostInfo {
+  return {
+    deviceId: device.deviceId,
+    version: device.hostVersion,
+    minimumVersion: MIN_HOST_VERSION,
+    compatibility: device.hostCompatibility,
+  };
+}
+
+/** Match one paired device to the CoreDevice target it was bound to (or named like). */
+function targetFor(
+  device: DeviceView,
+  targets: HostDeviceTarget[],
+  bindings: Array<{ deviceId: string; hostDeviceId: string }>,
+): HostDeviceTarget | null {
+  const binding = bindings.find((item) => item.deviceId === device.deviceId) ?? null;
+  if (binding !== null) {
+    const bound = targets.find((item) => item.hostDeviceId === binding.hostDeviceId);
+    if (bound !== undefined) return bound;
+  }
+  const name = device.name.trim().toLowerCase();
+  const named = targets.filter((item) => item.name.trim().toLowerCase() === name);
+  if (named.length === 1) return named[0];
+  const sameKind = targets.filter((item) => device.targetKind === null || item.kind === device.targetKind);
+  return sameKind.length === 1 ? sameKind[0] : null;
+}
+
+/**
+ * Add the explicit pairing/presence/Host fields. `online` (WebSocket presence)
+ * is not CoreDevice pairing and not Host installation; keep them separate so an
+ * Agent never reads one as the other.
+ */
+function enrichDevice(
+  device: DeviceView,
+  targets: HostDeviceTarget[],
+  bindings: Array<{ deviceId: string; hostDeviceId: string }>,
+): DeviceView {
+  const target = targetFor(device, targets, bindings);
+  const binding = bindings.find((item) => item.deviceId === device.deviceId) ?? null;
+  const compatibility = hostCompatibility(device.hostVersion);
+  let nextAction: string | null = null;
+  if (compatibility === 'outdated') {
+    nextAction = `Update the JieZi Host App (installed ${device.hostVersion ?? 'unknown'}, minimum ${MIN_HOST_VERSION}); 0.1.x can show the freeze-snapshot alert.`;
+  } else if (!device.online) {
+    nextAction = target !== null
+      ? `Launch the Host with miniapp_device { action: "launch_host", deviceId: "${device.deviceId}" }.`
+      : 'Unlock the iPhone and open the JieZi Host App, then refresh.';
+  } else if (!device.developerMode) {
+    nextAction = 'Open developer mode in the JieZi Host App.';
+  } else if (!device.automation) {
+    nextAction = 'Start automation in the JieZi Host App.';
+  }
+  return {
+    ...device,
+    jieziPaired: true,
+    coreDevicePaired: target?.paired ?? null,
+    hostRunning: device.online,
+    hostMinimumVersion: MIN_HOST_VERSION,
+    hostCompatibility: compatibility,
+    boundHostDeviceId: binding?.hostDeviceId ?? null,
+    nextAction,
+  };
 }
 
 /** A durable revocation blocks offline launch; a live ready envelope can replace it. */
@@ -154,6 +241,8 @@ export class JieZiOperations {
   readonly client: BridgeClient;
   readonly deviceHost: DeviceHost;
   private readonly bridgeSupervisor: BridgeSupervisor | null;
+  private readonly probeClient: BridgeClient;
+  private readonly expectedIdentity: BridgeIdentity | null;
   private lastPairing: PairingMemory | null = null;
   private readonly deploymentHistory: DeploymentView[] = [];
   private readonly automationHistory: AutomationView[] = [];
@@ -164,6 +253,9 @@ export class JieZiOperations {
       settings,
       this.bridgeSupervisor === null ? undefined : () => this.bridgeSupervisor?.ensureRunning() ?? Promise.resolve(),
     );
+    // Read-only probes (status/doctor) must not start a bridge.
+    this.probeClient = new BridgeClient({ ...settings, autoStart: false });
+    this.expectedIdentity = bridgeIdentityFor(settings.bridgeCliPath) ?? null;
     this.deviceHost = deviceHost ?? new AppleDeviceHost(settings.stateDir);
   }
 
@@ -206,9 +298,14 @@ export class JieZiOperations {
     let bridge: StatusView['bridge'] = {
       available: false,
       version: null,
+      expectedVersion: this.expectedIdentity?.version ?? bundledBridgeVersion(),
+      identityMatch: null,
       bridgeName: this.lastPairing?.bridgeName ?? null,
       deviceUrl: null,
+      socketPath: this.settings.socketPath,
       projectRoot: null,
+      nsh: null,
+      install: null,
       capabilities: [],
       error: null,
     };
@@ -217,12 +314,33 @@ export class JieZiOperations {
 
     try {
       const health = recordOf(await this.client.get('/v1/health'), 'health');
+      const install = health.install !== null && typeof health.install === 'object' && !Array.isArray(health.install)
+        ? health.install as Record<string, unknown>
+        : null;
+      const installPath = install !== null && typeof install.packageRoot === 'string'
+        ? install.packageRoot
+        : install !== null && typeof install.path === 'string' ? install.path : null;
+      const installHash = install !== null && typeof install.packageHash === 'string' ? install.packageHash : null;
+      const identityMatch = installPath !== null && this.expectedIdentity !== null
+        ? installPath === this.expectedIdentity.packageRoot && installHash === this.expectedIdentity.packageHash
+        : null;
       bridge = {
         available: true,
         version: typeof health.version === 'string' ? health.version : null,
+        expectedVersion: this.expectedIdentity?.version ?? bundledBridgeVersion(),
+        identityMatch,
         bridgeName: this.lastPairing?.bridgeName ?? null,
         deviceUrl: typeof health.deviceUrl === 'string' ? health.deviceUrl : null,
+        socketPath: typeof health.socket === 'string' ? health.socket : this.settings.socketPath,
         projectRoot: typeof health.projectRoot === 'string' ? health.projectRoot : null,
+        nsh: typeof health.nsh === 'string'
+          ? { path: health.nsh, version: typeof health.nshVersion === 'string' ? health.nshVersion : null }
+          : null,
+        install: installPath === null ? null : {
+          path: installPath,
+          version: install !== null && typeof install.version === 'string' ? install.version : null,
+          hash: installHash,
+        },
         capabilities: Array.isArray(health.capabilities)
           ? health.capabilities.filter((entry): entry is string => typeof entry === 'string').slice(0, 16)
           : [],
@@ -397,17 +515,16 @@ export class JieZiOperations {
     return { ok: true, devices: list.slice(0, MAX_DEVICES).map(deviceView) };
   }
 
-  /** Discover/bind/launch lifecycle targets, or recover one paired device. */
+  /**
+   * Discover/bind/launch lifecycle targets, or recover one paired device.
+   * `list` returns the same device schema as `miniapp_devices`, enriched with
+   * CoreDevice pairing, Host presence/version, binding and one next action.
+   */
   async device(args: unknown): Promise<Record<string, unknown>> {
     const request = parseDeviceOperationArgs(args);
-    if (request.action === 'list') {
-      const [paired, targets] = await Promise.all([this.devices(), this.deviceHost.listTargets()]);
-      return {
-        ok: true,
-        devices: paired.devices,
-        targets,
-        bindings: this.deviceHost.listBindings(),
-      };
+    if (request.action === 'list') return this.deviceList();
+    if (request.action === 'launch_host') {
+      return this.launchHost(request.deviceId, request.hostDeviceId, request.rebind, request.waitMs);
     }
     return this.ensureReady({
       deviceId: request.deviceId as string,
@@ -415,6 +532,292 @@ export class JieZiOperations {
       rebind: request.rebind,
       waitMs: request.waitMs,
     });
+  }
+
+  /** One schema for both the devices tool and the device list action. */
+  async deviceList(): Promise<Record<string, unknown>> {
+    const warnings: string[] = [];
+    let devices: DeviceView[] = [];
+    let targets: HostDeviceTarget[] = [];
+    let bindings: Array<{ deviceId: string; hostDeviceId: string; kind: string; name: string; boundAt: string }> = [];
+    const [paired, discovered] = await Promise.allSettled([this.devices(), this.deviceHost.listTargets()]);
+    if (paired.status === 'fulfilled') devices = paired.value.devices;
+    else warnings.push(`paired devices could not be read: ${failureMessage(paired.reason)}`);
+    if (discovered.status === 'fulfilled') targets = discovered.value;
+    else warnings.push(`CoreDevice targets could not be read: ${failureMessage(discovered.reason)}`);
+    try {
+      bindings = this.deviceHost.listBindings();
+    } catch (error) {
+      warnings.push(`host bindings could not be read: ${failureMessage(error)}`);
+    }
+    if (paired.status === 'rejected' && discovered.status === 'rejected') {
+      throw paired.reason instanceof Error ? paired.reason : new JieZiError('bridge_protocol', 'device discovery failed');
+    }
+    const enriched = devices.map((device) => enrichDevice(device, targets, bindings));
+    return { ok: true, devices: enriched, targets, bindings, warnings };
+  }
+
+  /** Launch the installed Host without requiring a paired `deviceId` first. */
+  async launchHost(
+    deviceId: string | undefined,
+    hostDeviceId: string | undefined,
+    rebind: boolean,
+    waitMs: number,
+  ): Promise<Record<string, unknown>> {
+    const targets = await this.deviceHost.listTargets();
+    if (deviceId !== undefined) {
+      const device = await this.pairedDevice(deviceId);
+      const resolved = await this.deviceHost.resolveBinding({
+        deviceId,
+        deviceName: device.name,
+        targetKind: device.targetKind,
+        ...(hostDeviceId === undefined ? {} : { hostDeviceId }),
+        rebind,
+      });
+      await this.deviceHost.launch(resolved.target);
+      const deadline = Date.now() + waitMs;
+      let latest = device;
+      while (Date.now() < deadline) {
+        await sleep(500);
+        latest = await this.pairedDevice(deviceId);
+        if (latest.online) break;
+      }
+      const enriched = enrichDevice(latest, targets, this.deviceHost.listBindings());
+      return {
+        ok: true,
+        state: latest.online ? (isAutomationReady(latest) ? 'ready' : 'connected') : 'launched',
+        deviceId,
+        hostDeviceId: resolved.target.hostDeviceId,
+        target: resolved.target,
+        device: enriched,
+        launched: true,
+        nextAction: enriched.nextAction ?? 'Call miniapp_device with action ensure_ready if automation is still off.',
+      };
+    }
+
+    let target: HostDeviceTarget | undefined;
+    if (hostDeviceId !== undefined) {
+      target = targets.find((item) => item.hostDeviceId === hostDeviceId);
+      if (target === undefined) {
+        throw new JieZiError('host_binding_required', `Unknown CoreDevice target: ${hostDeviceId}`, { retryable: false });
+      }
+    } else {
+      const eligible = targets.filter((item) => item.kind === 'physical'
+        ? item.paired
+        : item.connected || item.state.toLowerCase() === 'booted');
+      if (eligible.length === 1) target = eligible[0];
+      else {
+        const candidates = (eligible.length > 0 ? eligible : targets).slice(0, 8)
+          .map((item) => `${item.name} [${item.kind}:${item.hostDeviceId}]`).join(', ');
+        throw new JieZiError(
+          'host_binding_required',
+          `Pass hostDeviceId to launch the Host. Candidates: ${candidates || 'none'}`,
+          { retryable: false },
+        );
+      }
+    }
+    await this.deviceHost.launch(target);
+    return {
+      ok: true,
+      state: 'launched',
+      hostDeviceId: target.hostDeviceId,
+      target,
+      nextAction: 'Pair the phone through the sidebar QR if no JieZi device is listed, then call miniapp_devices.',
+    };
+  }
+
+  /** Host version and compatibility for one paired device, never throwing. */
+  async hostInfo(deviceId: string): Promise<HostInfo> {
+    try {
+      const result = await this.devices();
+      const device = result.devices.find((item) => item.deviceId === deviceId);
+      if (device !== undefined) return hostOf(device);
+    } catch {
+      // A status/diagnostic call should still return its primary record.
+    }
+    return {
+      deviceId,
+      version: null,
+      minimumVersion: MIN_HOST_VERSION,
+      compatibility: 'unknown',
+    };
+  }
+
+  /** Restart the configured bridge, used by the panel and miniapp_doctor. */
+  async restartBridge(): Promise<Record<string, unknown>> {
+    if (this.bridgeSupervisor === null) {
+      throw new JieZiError(
+        'unsupported',
+        'This profile runs jiezi-bridge without supervision (autoStart is off); restart it manually and retry.',
+        { retryable: false },
+      );
+    }
+    await this.bridgeSupervisor.restart();
+    return {
+      ok: true,
+      restarted: true,
+      socketPath: this.settings.socketPath,
+      expectedVersion: this.expectedIdentity?.version ?? bundledBridgeVersion(),
+    };
+  }
+
+  /** Apply the one safe doctor repair, then report again. */
+  async repairToolchain(): Promise<SetupReport> {
+    return repairSetup(this.settings);
+  }
+
+  /**
+   * One-call readiness report for the Agent: bridge identity, toolchain, Host
+   * version, pairing, and automation. `fix` only rewrites a stale nsh path and
+   * restarts a stale bridge; it never initializes trust, pairs, or launches.
+   */
+  async doctor(args: unknown = {}): Promise<Record<string, unknown>> {
+    const value = args !== null && typeof args === 'object' && !Array.isArray(args)
+      ? args as Record<string, unknown>
+      : {};
+    const fix = value.fix === true;
+    const blockers: Array<{ code: string; message: string; action: string }> = [];
+    const nextActions: string[] = [];
+    let setup: SetupReport | null = null;
+    let setupError: string | null = null;
+    try {
+      setup = fix ? await repairSetup(this.settings) : await inspectSetup(this.settings);
+    } catch (error) {
+      setupError = failureMessage(error);
+    }
+
+    let health: Record<string, unknown> | null = null;
+    let healthError: string | null = null;
+    try {
+      health = recordOf(await this.probeClient.get('/v1/health'), 'health');
+    } catch (error) {
+      healthError = failureMessage(error);
+    }
+    let install = health?.install !== null && health?.install !== undefined
+      && typeof health.install === 'object' && !Array.isArray(health.install)
+      ? health.install as Record<string, unknown>
+      : null;
+    let runningRoot = install !== null && typeof install.packageRoot === 'string' ? install.packageRoot : null;
+    let runningHash = install !== null && typeof install.packageHash === 'string' ? install.packageHash : null;
+    let identityMatch = runningRoot !== null && this.expectedIdentity !== null
+      ? runningRoot === this.expectedIdentity.packageRoot && runningHash === this.expectedIdentity.packageHash
+      : null;
+    if (fix && (health === null || identityMatch === false || setup?.fixed === true)) {
+      try {
+        await this.restartBridge();
+        health = recordOf(await this.probeClient.get('/v1/health'), 'health');
+        healthError = null;
+        install = health.install !== null && health.install !== undefined
+          && typeof health.install === 'object' && !Array.isArray(health.install)
+          ? health.install as Record<string, unknown>
+          : null;
+        runningRoot = install !== null && typeof install.packageRoot === 'string' ? install.packageRoot : null;
+        runningHash = install !== null && typeof install.packageHash === 'string' ? install.packageHash : null;
+        identityMatch = runningRoot !== null && this.expectedIdentity !== null
+          ? runningRoot === this.expectedIdentity.packageRoot && runningHash === this.expectedIdentity.packageHash
+          : null;
+        nextActions.push('Restarted the bridge as part of the fix; the report below is from the new process.');
+      } catch (error) {
+        blockers.push({ code: 'bridge', message: failureMessage(error), action: 'Start the bridge from the JieZi panel.' });
+      }
+    }
+    if (health === null) {
+      blockers.push({
+        code: 'bridge',
+        message: healthError ?? 'jiezi-bridge is not running',
+        action: 'Open the JieZi sidebar and press 重启桥接, or start jiezi-bridge manually.',
+      });
+    } else if (identityMatch === false) {
+      blockers.push({
+        code: 'bridge_identity',
+        message: 'The running bridge does not match this plugin installation.',
+        action: 'Press 重启桥接 in the JieZi panel; do not reuse the old process.',
+      });
+    }
+
+    const nsh = setup?.nsh ?? null;
+    if (setupError !== null) {
+      blockers.push({ code: 'setup', message: setupError, action: 'Reinstall the plugin bundle or run the setup check again.' });
+    } else if (nsh === null || !nsh.found) {
+      blockers.push({
+        code: 'nsh',
+        message: nsh?.error ?? 'nsh was not found',
+        action: fix ? 'Install jiezi-nsh or pass an explicit nshPath.' : 'Call miniapp_doctor with fix:true, then restart the bridge.',
+      });
+    }
+
+    let devices: DeviceView[] = [];
+    let targets: HostDeviceTarget[] = [];
+    let discoveryWarnings: string[] = [];
+    try {
+      const listed = await this.deviceList();
+      devices = Array.isArray(listed.devices) ? listed.devices as DeviceView[] : [];
+      targets = Array.isArray(listed.targets) ? listed.targets as HostDeviceTarget[] : [];
+      discoveryWarnings = Array.isArray(listed.warnings) ? listed.warnings.filter((item): item is string => typeof item === 'string') : [];
+    } catch (error) {
+      discoveryWarnings.push(failureMessage(error));
+    }
+    const hosts = devices.map(hostOf);
+    const outdated = hosts.filter((host) => host.compatibility === 'outdated');
+    const warnings: string[] = [];
+    if (outdated.length > 0) {
+      const text = `Update the JieZi Host App on ${outdated.map((host) => host.deviceId).join(', ')} to ${MIN_HOST_VERSION} or newer; 0.1.x can raise the freeze-snapshot alert.`;
+      warnings.push(text);
+      nextActions.push(text);
+    }
+    if (devices.length === 0) {
+      blockers.push({
+        code: 'pairing',
+        message: targets.length > 0 ? 'CoreDevice sees a phone, but no JieZi device is paired.' : 'No paired device and no CoreDevice target.',
+        action: targets.length > 0
+          ? 'Generate the sidebar QR and pair the phone; or launch the Host with miniapp_device action launch_host.'
+          : 'Connect and unlock the iPhone, open the JieZi Host App, then pair with the sidebar QR.',
+      });
+    } else if (!devices.some((device) => device.online)) {
+      blockers.push({
+        code: 'host_running',
+        message: 'A device is paired but the Host is not connected.',
+        action: 'Call miniapp_device with action launch_host and the paired deviceId.',
+      });
+    } else if (!devices.some((device) => device.online && device.developerMode && device.automation)) {
+      blockers.push({
+        code: 'automation',
+        message: 'The Host is connected but developer automation is not ready.',
+        action: 'Open developer mode and start automation on the phone; call miniapp_device ensure_ready to verify.',
+      });
+    }
+    for (const device of devices) {
+      if (device.nextAction !== null) nextActions.push(`${device.name}: ${device.nextAction}`);
+    }
+    nextActions.push(...discoveryWarnings);
+
+    return {
+      ok: true,
+      ready: blockers.length === 0,
+      bridge: health === null ? null : {
+        running: true,
+        version: typeof health.version === 'string' ? health.version : null,
+        expectedVersion: this.expectedIdentity?.version ?? bundledBridgeVersion(),
+        identityMatch,
+        socketPath: typeof health.socket === 'string' ? health.socket : this.settings.socketPath,
+        nsh: typeof health.nsh === 'string' ? health.nsh : null,
+        pid: typeof health.pid === 'number' ? health.pid : null,
+        startedAt: typeof health.startedAt === 'string' ? health.startedAt : null,
+      },
+      nsh,
+      host: {
+        minimumVersion: MIN_HOST_VERSION,
+        devices: hosts,
+      },
+      pairing: await this.currentPairingView(),
+      setup,
+      blockers,
+      warnings,
+      nextActions: nextActions.slice(0, 12),
+      fixed: setup?.fixed ?? false,
+      fixes: setup?.fixes ?? [],
+      checkedAt: new Date().toISOString(),
+    };
   }
 
   /** Launch only when necessary, then verify presence rather than process exit. */
@@ -507,18 +910,83 @@ export class JieZiOperations {
     return recordOf(await this.client.post('/v1/build', body), 'build result');
   }
 
-  /** Queue one release for one device. */
+  /** Queue one release for one device; `force` starts a fresh install operation. */
   async deploy(args: unknown): Promise<Record<string, unknown>> {
     const request = parseDeployArgs(args);
-    if (this.settings.autoStart) await this.ensureReady({ deviceId: request.deviceId });
+    let readyDevice: DeviceView | null = null;
+    if (this.settings.autoStart) {
+      const ready = await this.ensureReady({ deviceId: request.deviceId });
+      if (ready.device !== null && typeof ready.device === 'object' && !Array.isArray(ready.device)) {
+        readyDevice = ready.device as DeviceView;
+      }
+    }
     const result = recordOf(
-      await this.client.post('/v1/deploy', { deviceId: request.deviceId, releaseId: request.releaseId }),
+      await this.client.post('/v1/deploy', {
+        deviceId: request.deviceId,
+        releaseId: request.releaseId,
+        ...(request.force ? { force: true } : {}),
+      }),
       'deploy result',
     );
     if (typeof result.opId === 'string') {
       this.rememberDeployment(deploymentView({ ...result, deviceId: request.deviceId, releaseId: request.releaseId }));
     }
-    return result;
+    const host: HostInfo = readyDevice === null
+      ? { deviceId: request.deviceId, version: null, minimumVersion: MIN_HOST_VERSION, compatibility: 'unknown' }
+      : hostOf(readyDevice);
+    const warning = host.compatibility === 'outdated'
+      ? `The JieZi Host App on ${request.deviceId} is ${host.version ?? 'unknown'} (minimum ${host.minimumVersion}). Its legacy freeze-snapshot path can block automation after deploy/open; updating the Host is safer than redeploying the mini-app.`
+      : null;
+    if (result.deduplicated === true && result.resent !== true) {
+      return {
+        ...result,
+        host,
+        ...(warning === null ? {} : { warning }),
+        reinstalled: false,
+        nextAction: 'The existing operation was not reinstalled. Use miniapp_reload (or miniapp_deploy with force:true) when a Host alert or stale instance is blocking automation.',
+      };
+    }
+    return { ...result, host, ...(warning === null ? {} : { warning }), reinstalled: result.reinstalled !== false };
+  }
+
+  /**
+   * Reinstall and relaunch the current release with a fresh operation id.
+   * Omit releaseId to use the device's active release (or appId's installed
+   * release). This is the supported way to clear a stuck instance or a Host
+   * alert; miniapp_open never restarts a running instance.
+   */
+  async reload(args: unknown): Promise<Record<string, unknown>> {
+    if (args === null || typeof args !== 'object' || Array.isArray(args)) {
+      throw new JieZiError('invalid_request', 'arguments must be an object');
+    }
+    const value = args as Record<string, unknown>;
+    const deviceId = requireString(value.deviceId, 'deviceId', 256);
+    let releaseId: string | null = optionalString(value.releaseId, 'releaseId', 256) ?? null;
+    const appId = optionalString(value.appId, 'appId', 128);
+    if (releaseId === null) {
+      const device = await this.pairedDevice(deviceId);
+      const active = device.activeApp;
+      const match = appId === undefined
+        ? null
+        : active?.installedApps.find((app) => app.appId === appId) ?? null;
+      releaseId = appId === undefined
+        ? active?.releaseId ?? null
+        : match?.releaseId ?? null;
+      if (releaseId === null || releaseId.length === 0) {
+        throw new JieZiError(
+          'unknown_release',
+          appId === undefined
+            ? 'No active release is known for this device; pass releaseId or open the app first.'
+            : `Installed app ${appId} has no known release; pass releaseId.`,
+          { retryable: false },
+        );
+      }
+    }
+    if (releaseId === null || releaseId.length === 0) {
+      throw new JieZiError('unknown_release', 'No release is available to reload; pass releaseId.', { retryable: false });
+    }
+    const result = await this.deploy({ deviceId, releaseId, force: true });
+    return { ...result, reload: true, releaseId };
   }
 
   /** Read one operation, or the recent list for a device. */
@@ -553,16 +1021,22 @@ export class JieZiOperations {
       const evidence = op.op?.evidenceId;
       evidenceId = typeof evidence === 'string' ? evidence : null;
       if (evidenceId === null) {
+        const opDeviceId = typeof op.op?.deviceId === 'string' ? op.op.deviceId : null;
         return {
           ok: false,
           code: 'evidence_pending',
           message: 'No evidence has arrived for this operation yet.',
           state: typeof op.op?.state === 'string' ? op.op.state : null,
           failureLayer: typeof op.op?.failureLayer === 'string' ? op.op.failureLayer : null,
+          ...(opDeviceId === null ? {} : { host: await this.hostInfo(opDeviceId) }),
         };
       }
     }
-    return recordOf(await this.client.get(`/v1/evidence/${encodeURIComponent(evidenceId)}`), 'evidence');
+    const result = recordOf(await this.client.get(`/v1/evidence/${encodeURIComponent(evidenceId)}`), 'evidence');
+    if (typeof result.deviceId === 'string' && result.deviceId.length > 0) {
+      return { ...result, host: await this.hostInfo(result.deviceId) };
+    }
+    return result;
   }
 
   /** Ask one device for a page tree/screenshot and wait briefly. */
@@ -648,6 +1122,8 @@ export class JieZiOperations {
       appId: request.appId,
       instanceId: typeof current.instanceId === 'string' ? current.instanceId : null,
       error,
+      host: await this.hostInfo(request.deviceId),
+      note: 'open never restarts a running instance; use miniapp_reload when a Host alert or stale instance blocks automation.',
     };
   }
 
@@ -717,16 +1193,27 @@ export class JieZiOperations {
     }
 
     const snapshot: AutomationSnapshot | null = automationSnapshot(current);
+    const rawHostAlert = automationAlert(current.hostAlert);
+    // The legacy Host message says "deploy a fixed version", which is wrong for
+    // a Host-layer alert. Keep the raw text but append the routing the Agent
+    // should follow, so reading hostAlert directly cannot send it redeploying.
+    const hostAlert = rawHostAlert === null
+      ? null
+      : { ...rawHostAlert, message: `${rawHostAlert.message}（宿主层问题；请更新宿主或清除弹窗，不要重复部署小程序。）` };
     let view = automationView(current, {
       requestId,
       opId: args.opId,
       deviceId: args.deviceId,
       action: args.action,
+      appId: args.appId ?? hostAlert?.appId ?? null,
+      instanceId: args.instanceId ?? hostAlert?.instanceId ?? null,
     });
+    if (view.appId === null) view = { ...view, appId: args.appId ?? hostAlert?.appId ?? null };
+    if (view.instanceId === null) view = { ...view, instanceId: args.instanceId ?? hostAlert?.instanceId ?? null };
     const verification = evaluateExpectation(args.expect, snapshot);
     const diagnostics = automationDiagnostics(current.diagnostics);
-    const hostAlert = automationAlert(current.hostAlert);
     const runtimeError = newestError(diagnostics);
+    const host = await this.hostInfo(args.deviceId);
     let error = current.error === null || current.error === undefined
       ? null
       : {
@@ -736,15 +1223,33 @@ export class JieZiOperations {
           message: typeof (current.error as Record<string, unknown>).message === 'string'
             ? ((current.error as Record<string, unknown>).message as string).slice(0, 500)
             : 'automation failed',
+          category: 'device' as 'device' | 'host' | 'runtime' | 'verification',
         };
     if (error === null && view.state === 'done' && !verification.passed) {
       error = {
         code: 'expectation_failed',
         message: verification.reason ?? '动作后的页面没有满足期望',
+        category: 'verification',
+      };
+    }
+    if (error !== null && error.code === 'HOST_ALERT_BLOCKING') {
+      const raw = hostAlert?.message ?? error.message;
+      const freeze = /冻结|快照|freeze|snapshot/iu.test(raw);
+      const version = host.version ?? 'unknown';
+      error = {
+        code: 'HOST_ALERT_BLOCKING',
+        message: [
+          `宿主 App 弹窗阻挡了自动化：${raw}`,
+          freeze
+            ? `这是宿主 App ${version} 的旧版冻结快照缺陷，不是小程序构建或运行时错误。不要重复部署同一个 release。`
+            : '这是宿主 App 界面层的问题，不是小程序运行时错误。',
+          `请更新宿主 App（当前 ${version}，最低 ${host.minimumVersion}），或在手机上点“继续/关闭”后重试。`,
+        ].join(''),
+        category: 'host',
       };
     }
     if (error !== null && view.state === 'done') {
-      view = { ...view, state: 'failed', error };
+      view = { ...view, state: 'failed', error: { code: error.code, message: error.message } };
     }
     this.rememberAutomation(view);
     return {
@@ -758,14 +1263,23 @@ export class JieZiOperations {
       instanceId: view.instanceId,
       snapshotId: snapshot?.snapshotId ?? null,
       nodeCount: snapshot?.nodes.length ?? 0,
-      outline: snapshot === null ? null : formatOutline(snapshot, { frames: args.includeFrames === true }),
+      outline: snapshot === null ? null : formatOutline(snapshot, {
+        frames: args.includeFrames === true,
+        visibleOnly: args.includeHidden !== true,
+      }),
       error,
       verification,
       diagnostics,
       diagnosticCursor: diagnostics?.cursor ?? null,
       hostAlert,
+      host,
       runtimeError,
       deduplicated: started.deduplicated === true,
+      snapshotIssues: {
+        visibleNodeCount: snapshot?.visibleNodeCount ?? 0,
+        hiddenNodeCount: snapshot?.hiddenNodeCount ?? 0,
+        duplicateTestIDs: snapshot?.duplicateTestIDs ?? [],
+      },
     };
   }
 

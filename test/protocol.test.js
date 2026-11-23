@@ -93,7 +93,9 @@ test('observe arguments ignore target and clamp the timeout', () => {
   assert.equal(parseCaptureArgs({ deviceId: 'dev_1', waitMs: -5 }).waitMs, 0);
   assert.equal(parseCaptureArgs({ deviceId: 'dev_1' }).waitMs, 5_000);
   assert.equal(parseCaptureArgs({ deviceId: 'dev_1', requestId: 'cap_1' }).requestId, 'cap_1');
-  assert.deepEqual(parseDeployArgs({ deviceId: 'dev_1', releaseId: 'rel_1' }), { deviceId: 'dev_1', releaseId: 'rel_1' });
+  assert.deepEqual(parseDeployArgs({ deviceId: 'dev_1', releaseId: 'rel_1' }), { deviceId: 'dev_1', releaseId: 'rel_1', force: false });
+  assert.equal(parseDeployArgs({ deviceId: 'dev_1', releaseId: 'rel_1', force: true }).force, true);
+  assert.throws(() => parseDeployArgs({ deviceId: 'dev_1', releaseId: 'rel_1', force: 1 }), /force/);
   assert.throws(() => parseDiagnosticsArgs({}), /opId or evidenceId/);
 });
 
@@ -114,7 +116,7 @@ test('expectations scope text checks to the expected testID', () => {
   assert.equal(evaluateExpectation({ visibleLabel: 'Missing' }, snapshot).passed, false);
 });
 
-test('outline formatting is compact and bounded', () => {
+test('outline formatting hides recycled nodes by default and stays bounded', () => {
   const nodes = Array.from({ length: 300 }, (_, index) => ({
     alias: String(index),
     testID: `control-${index}`,
@@ -126,23 +128,23 @@ test('outline formatting is compact and bounded', () => {
     visible: index % 10 !== 0,
     path: `0/${index}`,
   }));
-  const outline = formatOutline({
+  const snapshot = {
     snapshotId: 'snap_1', appId: 'com.jiezi.demo', releaseId: 'rel_1', instanceId: 'inst_1',
     mode: 'semantic', capabilities: ['tap'], screen: { width: 402, height: 874 },
-    nodes, truncated: true,
-  }, { frames: true });
-  assert.match(outline, /^snapshot snap_1 app=com\.jiezi\.demo instance=inst_1 mode=semantic screen=402x874 nodes=300 \(truncated\)/);
-  assert.match(outline, /testID="control-0"/);
-  assert.match(outline, /frame=1,1 10x10/);
-  assert.match(outline, /hidden/);
-  const compact = formatOutline({
-    snapshotId: 'snap_1', appId: 'com.jiezi.demo', releaseId: 'rel_1', instanceId: 'inst_1',
-    mode: 'semantic', capabilities: ['tap'], screen: { width: 402, height: 874 },
-    nodes, truncated: true,
-  });
-  assert.doesNotMatch(compact, /screen=|frame=/);
-  assert.ok(outline.length <= MAX_OUTLINE_CHARS);
-  assert.match(outline, /more nodes omitted/);
+    nodes, truncated: true, visibleNodeCount: 270, hiddenNodeCount: 30, duplicateTestIDs: ['control-1'],
+  };
+  const visible = formatOutline(snapshot, { frames: true });
+  assert.match(visible, /^snapshot snap_1 app=com\.jiezi\.demo instance=inst_1 mode=semantic screen=402x874 nodes=270 \(30 hidden omitted\) \(truncated\)/);
+  assert.match(visible, /duplicateTestIDs="control-1"/);
+  assert.doesNotMatch(visible, /testID="control-0"/);
+  assert.match(visible, /frame=1,1 10x10/);
+  assert.doesNotMatch(visible, /\[300\]/);
+
+  const all = formatOutline(snapshot, { visibleOnly: false });
+  assert.match(all, /testID="control-0"/);
+  assert.match(all, /hidden/);
+  assert.match(all, /nodes=300/);
+  assert.ok(all.length <= 12_200);
 });
 
 test('API routes are exact absolute paths under /api/jiezi', () => {
@@ -158,6 +160,7 @@ test('API routes are exact absolute paths under /api/jiezi', () => {
     operation: '/api/jiezi/operation',
     diagnostics: '/api/jiezi/diagnostics',
     automation: '/api/jiezi/automation',
+    bridge: '/api/jiezi/bridge',
     unpair: '/api/jiezi/unpair',
   });
 });

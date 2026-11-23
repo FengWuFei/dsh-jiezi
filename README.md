@@ -4,7 +4,7 @@
 「初始化 → 编写 → 构建 → 签名 → 真机验证 → 修」闭环，外加一个负责初始化、配对和交付记录的侧栏面板。
 
 - **一个 Agent 预设**：`芥子开发模式`（官方标准 Agent 能力 + 芥子工具，不是封闭的小程序工具集）。
-- **十二个 `miniapp_*` 工具**：初始化、构建、部署、状态、界面树、语义操作、截图、录屏、诊断、设备与自动化。
+- **十四个 `miniapp_*` 工具**：初始化、构建、部署、重载、状态、环境诊断、界面树、语义操作、截图、录屏、诊断、设备与自动化。
 - **一个自带 skill**：`jiezi-miniapp`，讲清 Native Shell TSX、能力声明、真机验证与按诊断修复。
 - **一个侧栏面板**：显示桥接状态、配对二维码、设备、最近交付与最近自动化。
 
@@ -51,9 +51,11 @@ dsh plugin --profile web add dsh-jiezi
 
 1. 装好重启后，侧栏出现「芥子」。打开面板，点「初始化开发环境」—— 它会在 `~/.jiezi` 创建开发密钥、
    TLS 配置和桥接状态，只在你点击后执行，激活插件本身不会创建任何信任材料。
-2. 点面板里的配对二维码，用装了芥子宿主 App 的 iPhone 扫描，完成一次配对。
+2. 点面板里的配对二维码，用装了芥子宿主 App 的 iPhone 扫描，完成一次配对。二维码会显示剩余时间，
+   过期后自动换一张；「检测环境」会一次检查桥接、nsh、宿主版本与自动化状态。
 3. 新建一个空目录作为会话工作目录，选「芥子开发模式」预设开始对话。对 Agent 说「用 miniapp_init 初始化一个
    叫 hello 的小程序」，之后 `miniapp_build` → `miniapp_deploy` → `miniapp_ui` / `miniapp_action` 验证。
+   环境不确定时先让 Agent 调 `miniapp_doctor`；遇到宿主弹窗用 `miniapp_reload`，不要重复部署同一 release。
 
 `miniapp_init` 默认把**会话工作目录本身**当作项目根（目录必须为空）；一个目录想放多个小程序时，把
 `jiezi-tools` 行的配置改成 `projectLayout: named-subdirectory`，它会建 `<工作目录>/<projectId>`。
@@ -64,13 +66,15 @@ dsh plugin --profile web add dsh-jiezi
 |---|---|
 | `miniapp_init` | 从空目录初始化 Native Shell 项目，并预检签名证书覆盖范围 |
 | `miniapp_build` | 构建并签名，返回不可变 release（含 sha256） |
-| `miniapp_deploy` | 把已签名 release 安装到配对设备 |
-| `miniapp_status` | 查看当前安装、运行时与桥接状态 |
+| `miniapp_deploy` | 把已签名 release 安装到配对设备；`force: true` 强制重新安装 |
+| `miniapp_reload` | 用新操作重新安装并启动当前 release，清掉卡住的实例或宿主弹窗 |
+| `miniapp_status` | 查看当前安装、运行时、宿主版本与桥接状态 |
+| `miniapp_doctor` | 一次检查桥接身份、nsh、宿主版本、配对与自动化；`fix: true` 只做安全修复 |
 | `miniapp_ui` | 读取语义界面树（testID、标签、值、层级） |
 | `miniapp_action` | 点击、输入、滚动、断言（失败按数据返回，不会假装成功） |
 | `miniapp_capture` / `miniapp_screen` | 截图与录屏 |
 | `miniapp_diagnostics` | 取设备侧诊断事件 |
-| `miniapp_device` / `miniapp_devices` | 选择、恢复与列出可部署目标 |
+| `miniapp_device` / `miniapp_devices` | 统一设备 schema；列出目标、启动宿主（`launch_host`）或恢复就绪 |
 | `miniapp_open` | 重启宿主后直接打开已安装的小程序 |
 
 ## 配置
@@ -85,6 +89,8 @@ dsh plugin --profile web add dsh-jiezi
 - **Native Shell 工具链**：macOS arm64 由可选依赖 `jiezi-nsh-darwin-arm64` 提供；其他平台需自己安装 `nsh`
   并通过 `NSH_TOOLCHAIN` 或 `PATH` 暴露。没有 `nsh` 时初始化/构建会失败，诊断里会说明。
 - **设备**：部署、截图、语义验证需要装了芥子宿主 App 的模拟器或已配对 iPhone；纯构建签名不需要设备。
+  宿主 `0.1.x` 仍可能弹旧版冻结快照提示；插件会在设备/部署/诊断里标出版本与最低要求，`miniapp_reload`
+  可换一个新实例，但根治需要更新宿主 App。
 - **不包含**：芥子 iOS App、生产签名证书与 Linux 构建服务。插件只负责开发态的构建、调试与交付。
 - 插件不会读取或转存模型供应商凭据；桥接子进程只继承 PATH、HOME、TMPDIR、`NSH*`、`DEVELOPER_DIR` 等最小环境。
 

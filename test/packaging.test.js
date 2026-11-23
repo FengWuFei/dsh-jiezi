@@ -59,7 +59,7 @@ test('the package publishes the JieZi mini-app development skill', () => {
   assert.match(frontmatter[1], /^name: jiezi-miniapp$/m);
   assert.match(frontmatter[1], /^description: .+mini-app.+/m);
   assert.ok(skill.length < 8192, 'main skill stays below the preset tool-result pruning threshold');
-  for (const contract of ['nsh.json', '.nsh/types', 'testID', 'miniapp_build', 'miniapp_deploy', 'miniapp_status', 'miniapp_ui', 'miniapp_action', 'miniapp_diagnostics']) {
+  for (const contract of ['nsh.json', '.nsh/types', 'testID', 'miniapp_build', 'miniapp_deploy', 'miniapp_reload', 'miniapp_status', 'miniapp_ui', 'miniapp_action', 'miniapp_diagnostics', 'miniapp_doctor']) {
     assert.ok(skill.includes(contract), `skill covers ${contract}`);
   }
 

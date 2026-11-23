@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { installIdentity } from '../src/identity.js';
 
 const CLI = resolve(fileURLToPath(new URL('.', import.meta.url)), '../src/cli.js');
 
@@ -50,6 +51,11 @@ test('bridge pairs a device, protects its socket, and reports health', { timeout
       const health = await uds(info.socket, 'GET', '/v1/health');
       assert.equal(health.ok, true);
       assert.equal(health.socket, info.socket);
+      assert.equal(health.install.packageRoot, installIdentity().packageRoot);
+      assert.equal(health.install.packageHash, installIdentity().packageHash);
+      assert.equal(health.install.version, installIdentity().version);
+      assert.equal(typeof health.startedAt, 'string');
+      assert.equal(health.nsh, process.env.NSH_TOOLCHAIN ?? health.nsh);
 
       const pairing = JSON.parse(execFileSync(process.execPath, [
         CLI, 'pair-code', '--state-dir', stateDir,

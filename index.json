@@ -27,7 +27,7 @@
       },
       "description": {
         "en": "Initialize, build, sign, deploy, and drive Native Shell mini-apps on a paired iPhone, with a self-contained development skill and a sidebar pairing panel.",
-        "zh": "在 DSH 里初始化、构建、签名、部署并调试 Native Shell 小程序：自带开发 skill、十二个 miniapp_* 工具和侧栏配对面板。"
+        "zh": "在 DSH 里初始化、构建、签名、部署并调试 Native Shell 小程序：自带开发 skill、十四个 miniapp_* 工具和侧栏配对面板。"
       },
       "author": "FengWuFei",
       "homepage": "https://github.com/FengWuFei/dsh-jiezi#readme",
@@ -49,8 +49,8 @@
       },
       "versions": [
         {
-          "version": "1.0.3",
-          "publishTimestamp": 1795419119,
+          "version": "1.1.0",
+          "publishTimestamp": 1795420767,
           "source": {
             "type": "npm"
           },

@@ -118,10 +118,31 @@ export function buildRoutes(operations: JieZiOperations): HostFetchRoute[] {
       },
     },
     {
+      // GET reads the shared device schema; POST launches/recover one device.
       path: API_ROUTES.devices,
-      methods: ['GET'],
+      methods: ['GET', 'POST'],
       requestBody: 'buffered',
-      fetch: () => settle(() => operations.devices()),
+      fetch: (request) => request.method === 'POST'
+        ? settle(async () => operations.device(await readJson(request)))
+        : settle(() => operations.device({ action: 'list' })),
+    },
+    {
+      // POST restarts the supervised bridge or runs the readiness doctor.
+      path: API_ROUTES.bridge,
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: async (request) => settle(async () => {
+        const body = await readJson(request);
+        const action = body !== null && typeof body === 'object' && !Array.isArray(body)
+          ? (body as Record<string, unknown>).action
+          : undefined;
+        if (action === 'restart') return operations.restartBridge();
+        if (action === 'doctor') {
+          const fix = (body as Record<string, unknown>).fix === true;
+          return operations.doctor({ fix });
+        }
+        throw new JieZiError('invalid_request', 'action must be restart or doctor');
+      }),
     },
     {
       path: API_ROUTES.deploy,

@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Bridge } from './bridge.js';
 import { buildProject, ensureDevKey, resolveNsh, nshVersion } from './build.js';
-import { doctorReport } from './doctor.js';
+import { doctorFix, doctorReport } from './doctor.js';
 import { Store, ensureDir } from './store.js';
 import { PAIR_CODE_TTL_MS } from './protocol.js';
 import { ensureTlsCertificate } from './tls.js';
@@ -119,7 +119,7 @@ export function status(args = parseArgs(process.argv.slice(2))) {
 }
 
 export async function doctor(args = parseArgs(process.argv.slice(2))) {
-  return doctorReport(args);
+  return args.fix === true ? doctorFix(args) : doctorReport(args);
 }
 
 export async function build(args = parseArgs(process.argv.slice(2))) {

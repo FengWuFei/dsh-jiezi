@@ -184,8 +184,10 @@ function automationToolResult(result: AutomationResult): Record<string, unknown>
     diagnostics: result.diagnostics,
     diagnosticCursor: result.diagnosticCursor,
     hostAlert: result.hostAlert,
+    host: result.host,
     runtimeError: result.runtimeError,
     deduplicated: result.deduplicated,
+    snapshotIssues: result.snapshotIssues,
   };
 }
 
@@ -196,7 +198,7 @@ function sessionRoot(exec?: ToolExecution): string | undefined {
 }
 
 /**
- * Register the twelve project/delivery/lifecycle tools and the prompt section on the preset
+ * Register the fourteen project/delivery/lifecycle tools and the prompt section on the preset
  * context. Any operation failure becomes a structured tool result; only a
  * throw from the registration itself propagates.
  */
@@ -287,12 +289,13 @@ export function apply(ctx: ToolsContext, config: unknown = {}): void {
     }),
     tool({
       name: 'miniapp_deploy',
-      description: 'Queue a built release for one paired device. Returns an operation id immediately; pass it to miniapp_status with wait: true to block for the terminal result, or let the terminal status wake this Agent.',
+      description: 'Queue a built release for one paired device. Returns an operation id immediately; pass it to miniapp_status with wait: true to block for the terminal result, or let the terminal status wake this Agent. A repeated (releaseId, deviceId) is deduplicated and does not reinstall; use force:true or miniapp_reload to clear a stuck instance or Host alert.',
       parameters: {
         type: 'object',
         properties: {
           deviceId: { type: 'string', description: 'Target device from miniapp_devices.' },
           releaseId: { type: 'string', description: 'Release id returned by miniapp_build.' },
+          force: { type: 'boolean', description: 'Start a fresh install/launch operation for the same release instead of reusing the deduplicated one. Use for a stuck instance or a blocking Host alert.' },
         },
         required: ['deviceId', 'releaseId'],
         additionalProperties: false,
@@ -322,14 +325,22 @@ export function apply(ctx: ToolsContext, config: unknown = {}): void {
       async execute(args, exec) {
         const opId = typeof args.opId === 'string' ? args.opId : undefined;
         const deviceId = typeof args.deviceId === 'string' ? args.deviceId : undefined;
+        const attachHost = async (result: Record<string, unknown>): Promise<Record<string, unknown>> => {
+          const op = result.op !== null && typeof result.op === 'object' && !Array.isArray(result.op)
+            ? result.op as Record<string, unknown>
+            : null;
+          const opDeviceId = op !== null && typeof op.deviceId === 'string' ? op.deviceId : null;
+          if (opDeviceId === null) return result;
+          return { ...result, host: await operations.hostInfo(opDeviceId) };
+        };
         if (args.wait === true) {
           if (opId === undefined) throw new JieZiError('invalid_request', 'wait requires opId');
-          return waitForOperation(opId, statusWaitTimeout(args.timeoutMs), exec?.signal);
+          return attachHost(await waitForOperation(opId, statusWaitTimeout(args.timeoutMs), exec?.signal));
         }
-        return operations.operation({
+        return attachHost(await operations.operation({
           ...(opId === undefined ? {} : { opId }),
           ...(deviceId === undefined ? {} : { deviceId }),
-        });
+        }));
       },
     }),
     tool({
@@ -345,6 +356,37 @@ export function apply(ctx: ToolsContext, config: unknown = {}): void {
       },
       async execute(args) {
         return operations.diagnostics(args);
+      },
+    }),
+    tool({
+      name: 'miniapp_reload',
+      description: 'Reinstall and relaunch the current release with a fresh operation id. This is the supported way to clear a Host alert or a stuck instance without changing source. Omit releaseId to use the active or installed release. Returns an operation id; wait with miniapp_status.',
+      parameters: {
+        type: 'object',
+        properties: {
+          deviceId: { type: 'string', description: 'Target device from miniapp_devices.' },
+          releaseId: { type: 'string', description: 'Release to reinstall; defaults to the device active release.' },
+          appId: { type: 'string', description: 'Select the installed app whose release should be reloaded when releaseId is omitted.' },
+        },
+        required: ['deviceId'],
+        additionalProperties: false,
+      },
+      async execute(args) {
+        return operations.reload(args);
+      },
+    }),
+    tool({
+      name: 'miniapp_doctor',
+      description: 'One-call readiness check for the JieZi environment: bridge identity/version, nsh toolchain, Host version and compatibility, pairing, and developer automation. Returns ready, blockers, and nextActions. Use fix:true only to rewrite a stale nsh path and restart a stale bridge; it never initializes trust, pairs, or launches the Host.',
+      parameters: {
+        type: 'object',
+        properties: {
+          fix: { type: 'boolean', description: 'Apply the safe repairs (stale nshPath, stale bridge restart). Defaults to false.' },
+        },
+        additionalProperties: false,
+      },
+      async execute(args) {
+        return operations.doctor(args);
       },
     }),
     tool({
@@ -379,7 +421,7 @@ export function apply(ctx: ToolsContext, config: unknown = {}): void {
     }),
     tool({
       name: 'miniapp_open',
-      description: 'Open one already installed mini-app by appId after a Host restart, without tapping the Host application library and without downloading an artifact. Returns the running instance id or the bridge/host failure.',
+      description: 'Open one already installed mini-app by appId after a Host restart, without tapping the Host application library and without downloading an artifact. It never restarts or reloads a running instance; use miniapp_reload for a stuck instance or blocking Host alert. Returns the running instance id or the bridge/host failure.',
       parameters: {
         type: 'object',
         properties: {
@@ -412,20 +454,20 @@ export function apply(ctx: ToolsContext, config: unknown = {}): void {
     }),
     tool({
       name: 'miniapp_devices',
-      description: 'List paired devices known to the bridge, including online, developer-mode, automation, and active mini-app state.',
+      description: 'List paired devices with one schema shared by miniapp_device list: online, developer-mode, automation, active mini-app, jieziPaired/coreDevicePaired/hostRunning, Host version and compatibility, binding, CoreDevice targets, and one next action. Also works before bridge pairing to show launchable CoreDevice targets.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       async execute() {
-        return operations.devices();
+        return operations.device({ action: 'list' });
       },
     }),
     tool({
       name: 'miniapp_device',
-      description: 'Recover the one-pairing developer loop. list shows paired devices, CoreDevice/simulator targets and bindings. ensure_ready starts the configured bridge, binds a host UDID once, launches the installed JieZi App without terminating it, and verifies developer automation.',
+      description: 'Inspect or recover the developer loop. list shows paired devices, CoreDevice/simulator targets and bindings. launch_host starts the installed JieZi App with no paired deviceId (by hostDeviceId, a binding, or the only eligible target). ensure_ready starts the configured bridge, binds a host UDID once, launches the installed JieZi App without terminating it, and verifies developer automation.',
       parameters: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['list', 'ensure_ready'], description: 'List lifecycle state or recover one paired device.' },
-          deviceId: { type: 'string', description: 'Paired device id from miniapp_devices; required for ensure_ready.' },
+          action: { type: 'string', enum: ['list', 'ensure_ready', 'launch_host'], description: 'List lifecycle state, launch the Host, or recover one paired device.' },
+          deviceId: { type: 'string', description: 'Paired device id from miniapp_devices; required for ensure_ready and optional for launch_host.' },
           hostDeviceId: { type: 'string', description: 'CoreDevice/simulator UDID for the first binding or an explicit rebind.' },
           rebind: { type: 'boolean', description: 'Must be true to replace an existing hostDeviceId binding.' },
           waitMs: { type: 'integer', description: 'Readiness timeout from 1000 to 90000ms; defaults to 30000.' },
@@ -450,6 +492,7 @@ export function apply(ctx: ToolsContext, config: unknown = {}): void {
           snapshotId: { type: 'string', description: 'Snapshot id to read again.' },
           diagnosticCursor: { type: 'integer', description: 'Diagnostic cursor from a previous snapshot.' },
           includeFrames: { type: 'boolean', description: 'Include each visible node frame and the screen size in the outline; defaults to false.' },
+          includeHidden: { type: 'boolean', description: 'Include hidden accessibility nodes; defaults to false because recycled list rows can duplicate a testID.' },
           timeoutMs: { type: 'integer', description: 'How long the device may take, 1000 to 30000; defaults to 15000.' },
         },
         required: ['deviceId'],
@@ -477,6 +520,7 @@ export function apply(ctx: ToolsContext, config: unknown = {}): void {
           snapshotId: { type: 'string', description: 'Snapshot the target selectors were read from.' },
           diagnosticCursor: { type: 'integer', description: 'Diagnostic cursor from the snapshot used to choose the target.' },
           includeFrames: { type: 'boolean', description: 'Include each visible node frame and the screen size in the returned outline; defaults to false.' },
+          includeHidden: { type: 'boolean', description: 'Include hidden accessibility nodes in the returned outline; defaults to false.' },
           target: {
             type: 'object',
             description: 'One unique selector: testID, or alias/path from miniapp_ui, or label plus role. For type, the target or its subtree must contain the text input.',
@@ -495,12 +539,27 @@ export function apply(ctx: ToolsContext, config: unknown = {}): void {
           amount: { type: 'number', description: 'For action=scroll, the fraction of the viewport to move, 0.1 to 1; defaults to 0.8.' },
           expect: {
             type: 'object',
-            description: 'Post-action assertion evaluated by the shared operations layer after the device returns a fresh snapshot.',
+            description: 'Post-action assertion evaluated by the shared operations layer after the device returns a fresh snapshot. Conditions are ANDed; use checks to assert several scoped testIDs or texts in one call.',
             properties: {
               visibleTestID: { type: 'string' },
               visibleLabel: { type: 'string' },
               textContains: { type: 'string' },
               textEquals: { type: 'string' },
+              checks: {
+                type: 'array',
+                description: 'Up to 8 scoped checks. Text is scoped to the check testID (or label), so progress and hint text can be asserted together.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    testID: { type: 'string' },
+                    label: { type: 'string' },
+                    textContains: { type: 'string' },
+                    textEquals: { type: 'string' },
+                    focused: { type: 'boolean' },
+                  },
+                  additionalProperties: false,
+                },
+              },
             },
             additionalProperties: false,
           },
@@ -659,14 +718,18 @@ function promptSection(): string {
     '- Give screens, controls, and important result/error states stable unique testIDs. Keep capabilities minimal and never embed or seek provider, pairing, or signing credentials.',
     '',
     '### Required implementation and verification loop',
+    '- If the environment is uncertain (first call, nsh/Host version, no devices), call miniapp_doctor once. It returns ready, blockers, and nextActions. Use fix:true only for a stale nsh path or bridge restart. Do not guess a host target.',
     '- For a new app: miniapp_init → edit → miniapp_build. For later changes: inspect/read evidence → edit → miniapp_build. A deployable build requires ok:true and a releaseId; failed builds have no deployable release.',
     '- Deploy the exact successful release with miniapp_deploy, then immediately call miniapp_status with { opId, wait: true }. Do not end the turn or poll rapidly. On timeout, read the same opId again rather than duplicating deployment.',
+    '- A deploy result with deduplicated:true/reinstalled:false did not start a new install. Do not redeploy the same release hoping to change the screen; use miniapp_reload (or miniapp_deploy force:true) only when the instance is stuck or a Host alert blocks automation.',
     '- running proves only that the exact build launched without a startup-settle runtime error. It does not prove the requested interaction, persistence, or layout.',
-    '- Verify key flows with miniapp_ui and miniapp_action using fresh unique targets and expect assertions. Inspect state, error, verification.passed, diagnostics, Host alerts, and runtimeError even when the envelope is ok:true. Use miniapp_screen or miniapp_capture for visual evidence and actually read the image before making visual claims.',
+    '- Verify key flows with miniapp_ui and miniapp_action using fresh unique targets and expect assertions. Prefer expect.checks when one action must assert both progress and hint text. Hidden nodes are omitted by default; do not set includeHidden unless debugging recycled rows. Inspect state, error, verification.passed, diagnostics, snapshotIssues, Host alerts, host.version, and runtimeError even when the envelope is ok:true. Use miniapp_screen or miniapp_capture for visual evidence and actually read the image before making visual claims.',
+    '- HOST_ALERT_BLOCKING is a Host App layer issue, not a mini-app runtime error: do not rebuild or redeploy the same release. The alert carries the Host version; if it is older than host.minimumVersion, ask for a Host update or tell the user to tap 继续. runtimeError is separate.',
+    '- miniapp_open only opens an installed app when no instance is running. It never restarts a live instance; use miniapp_reload for that.',
     '- For failed build/runtime behavior, use miniapp_diagnostics with the opId or evidenceId and keep evidence scoped to that app instance. Repair compile/load/runtime source issues; check Host support for host-component; never retry an unchanged refused artifact. After a source fix, repeat build → deploy → blocking status → semantic verification.',
     '',
     '### Device and user boundaries',
-    '- The user pairs once through the JieZi sidebar and iPhone. miniapp_device list/ensure_ready inspects and recovers the configured bridge/Host; never guess among multiple host targets.',
+    '- The user pairs once through the JieZi sidebar and iPhone. miniapp_device list/launch_host/ensure_ready inspects and recovers the configured bridge/Host; never guess among multiple host targets. jieziPaired, coreDevicePaired, and hostRunning are different facts.',
     '- automation_disabled is explicit user revocation: stop and ask for user action if desired. Do not re-enable it through another channel. Pairing, unlock, trust, and missing Host installation can remain user blockers.',
     '- Do not edit bridge state, DSH profiles, signing keys, or files outside the project. Do not claim initialization, build, install, action, or verification success without the corresponding observed result; report unrun checks and blockers explicitly.',
   ].join('\n');

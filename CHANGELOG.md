@@ -3,6 +3,43 @@
 本文件记录每个公开发布版本的变更；格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-11-23
+
+### 新增
+
+- `miniapp_doctor`：一次返回桥接身份、nsh、宿主版本/兼容性、配对、自动化与 CoreDevice 目标；
+  `fix: true` 只回写失灵的 `nshPath` 并重启身份不一致的桥接，不创建信任材料、不配对、不启动宿主。
+- `miniapp_reload` 与 `miniapp_deploy { force: true }`：用新的操作 id 重新安装/启动当前 release，
+  用于清掉卡住的实例或宿主弹窗；普通重复部署返回 `reinstalled: false` 与下一步动作。
+- `miniapp_device { action: "launch_host" }`：不需要已配对的 `deviceId`，按 `hostDeviceId`、绑定或
+  唯一可见目标启动宿主。
+- `miniapp_action` 的 `expect.checks`：一次断言多个带 testID 的作用域条件；`miniapp_ui` /
+  `miniapp_action` 支持 `includeHidden`。
+- 面板显示桥接 socket、项目根目录、nsh 路径/版本、桥接安装哈希与宿主版本；新增「重启桥接」「检测环境」；
+  配对二维码显示倒计时并在过期后自动换一张。
+
+### 修复
+
+- 桥接升级后进程仍是旧代码：health 增加安装根/模块哈希/启动时间，supervisor 据此重启自己拉起或可证明
+  属于本安装的旧进程；无法证明归属时以 `bridge_identity_mismatch` 失败而不是误杀。桥接每次 init/build
+  重新解析 `nsh`，`doctor --fix` 可回写失灵的路径。
+- `HOST_ALERT_BLOCKING` 不再与 `runtimeError` 混在一起：保留 appId/instanceId，附宿主版本/最低要求，
+  错误信息要求更新宿主或清除弹窗，不再建议重复部署小程序。
+- 语义快照去除与可见节点同 testID 的隐藏节点，默认不渲染 hidden 节点，并在 `snapshotIssues` 报告剩余
+  重复 testID。
+- `miniapp_devices` 与 `miniapp_device list` 统一 schema，拆开 `jieziPaired` / `coreDevicePaired` /
+  `hostRunning`，并带 `nextAction`。
+- 面板「连接方式」此前显示项目根目录，现分开显示连接地址、桥接 socket 与项目根目录。
+
+### 变更
+
+- 随包桥接快照升级到 `jiezi-bridge 0.3.4`。
+- `miniapp_open` 文档明确：只打开未运行的已安装小程序，不重启运行中的实例；需要重启用 `miniapp_reload`。
+- 脚手架/技能文档补充安全区与 `env(keyboard-inset-height)` 键盘避让、`Checkbox` 可见勾选与
+  无障碍隐藏装饰元素的做法，并记录 `textDecorationLine` 在 iOS 尚未渲染的限制。
+
+[1.1.0]: https://github.com/FengWuFei/dsh-jiezi/releases/tag/v1.1.0
+
 ## [1.0.3] - 2026-11-23
 
 ### 变更

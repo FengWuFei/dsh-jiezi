@@ -66,8 +66,9 @@ test('preset tools execute against a live jiezi-bridge', { timeout: 120_000 }, a
     apply(ctx, { socketPath: info.socket, timeoutMs: 60_000 });
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
       'miniapp_action', 'miniapp_build', 'miniapp_capture', 'miniapp_deploy',
-      'miniapp_device', 'miniapp_devices', 'miniapp_diagnostics', 'miniapp_init', 'miniapp_open',
-      'miniapp_screen', 'miniapp_status', 'miniapp_ui',
+      'miniapp_device', 'miniapp_devices', 'miniapp_diagnostics', 'miniapp_doctor',
+      'miniapp_init', 'miniapp_open', 'miniapp_reload', 'miniapp_screen',
+      'miniapp_status', 'miniapp_ui',
     ]);
     assert.equal(sections.length, 1);
     assert.match(sections[0].text, /host-component/);

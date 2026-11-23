@@ -9,8 +9,9 @@ import { connect as netConnect } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { hostname, networkInterfaces } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
-import { buildProject, resolveNsh } from './build.js';
+import { buildProject, nshVersion, resolveNsh } from './build.js';
 import { initializeProject } from './project-init.js';
+import { installIdentity } from './identity.js';
 import { VERSION } from './version.js';
 import { createWsServer } from './ws.js';
 import {
@@ -85,6 +86,8 @@ export class Bridge {
     this.automationByOp = new Map(); // opId -> requestId
     this.openRequests = new Map(); // requestId -> bounded open-app state
     this.eventClients = new Set();
+    this.identity = installIdentity();
+    this.nsh = null;
     this.startedAt = new Date().toISOString();
     this.controlServer = null;
     this.deviceServer = null;
@@ -95,7 +98,7 @@ export class Bridge {
   }
 
   async start() {
-    resolveNsh(this.config.nshPath);
+    await this.refreshNsh(true);
     await prepareSocket(this.config.socketPath);
     const self = this;
 
@@ -134,18 +137,60 @@ export class Bridge {
     return this.describe();
   }
 
+  /**
+   * Resolve the toolchain for this call. A configured path that disappeared in
+   * an upgrade must not pin the process to the old location: discovery runs
+   * again, and a different executable is written back to config.json so health
+   * and the next process start agree.
+   */
+  async refreshNsh(persist = false) {
+    const path = resolveNsh(this.config.nshPath);
+    let version = null;
+    try {
+      version = await nshVersion(path);
+    } catch {
+      // A runnable CLI with an unreadable version is still usable; health says
+      // so rather than failing the whole bridge.
+    }
+    const changed = path !== this.config.nshPath;
+    if (changed) {
+      this.config.nshPath = path;
+      if (persist) {
+        try {
+          // Re-read before writing so a concurrent pairing/config change is not
+          // clobbered by this process's older in-memory copy.
+          const current = this.store.loadConfig();
+          this.store.saveConfig(current !== null && typeof current === 'object' ? { ...current, nshPath: path } : this.config);
+        } catch {
+          // A read-only state directory is reported by doctor, not fatal here.
+        }
+      }
+    }
+    if (changed || this.nsh === null) this.log(`nsh ${version ?? 'unknown'} at ${path}`);
+    this.nsh = { path, version };
+    return this.nsh;
+  }
+
   describe() {
     return {
       ok: true,
       version: VERSION,
       pid: process.pid,
       startedAt: this.startedAt,
+      install: {
+        path: this.identity.packageRoot,
+        packageRoot: this.identity.packageRoot,
+        packageHash: this.identity.packageHash,
+        version: this.identity.version,
+        newestMtimeMs: this.identity.newestMtimeMs,
+      },
       socket: this.config.socketPath,
       deviceUrl: this.advertisedDeviceUrl(),
       artifactBase: this.config.publicUrlBase ?? this.advertisedBaseUrl(),
       tlsFingerprint: this.config.tlsFingerprint ?? null,
       projectRoot: this.config.projectRoot,
-      nsh: this.config.nshPath,
+      nsh: this.nsh?.path ?? this.config.nshPath,
+      nshVersion: this.nsh?.version ?? null,
       requireSigned: this.config.requireSigned,
       devices: this.store.listDevices().length,
       capabilities: ['project-init', 'deploy', 'evidence', 'capture', 'pairing-session', 'automation'],
@@ -170,6 +215,7 @@ export class Bridge {
               installedApps: presence.installedApps ?? [],
             }
           : null,
+        hostVersion: presence?.appVersion || null,
         lastSeenAt: live?.lastSeenAt ?? device.lastSeenAt ?? null,
       };
     });
@@ -301,10 +347,11 @@ export class Bridge {
     const root = resolveCallRoot(this.config.projectRoot, body.root);
     const layout = resolveProjectLayout(body.layout);
     const destination = initDestination(root, layout, projectId, body.root !== undefined);
+    const toolchain = await this.refreshNsh(true);
     const result = await initializeProject({
       body,
       destination,
-      nshPath: resolveNsh(this.config.nshPath),
+      nshPath: toolchain.path,
     });
     this.log(`init ${result.projectId} ${result.projectDir}`);
     return result;
@@ -334,7 +381,8 @@ export class Bridge {
 
     this.log(`build ${projectId} ${projectDir}`);
     const buildNumber = this.store.reserveBuild(projectId);
-    const nsh = resolveNsh(this.config.nshPath);
+    const toolchain = await this.refreshNsh(true);
+    const nsh = toolchain.path;
     const result = await buildProject({
       projectDir,
       projectId,
@@ -672,6 +720,9 @@ export class Bridge {
   async deploy(body) {
     const deviceId = requireId(body.deviceId, 'deviceId');
     const releaseId = requireId(body.releaseId, 'releaseId');
+    if (body.force !== undefined && typeof body.force !== 'boolean') {
+      throw new ProtocolError('invalid_request', 'force must be a boolean');
+    }
     const device = this.store.getDevice(deviceId);
     if (!device) throw new ProtocolError('not_paired', 'unknown device');
 
@@ -681,11 +732,27 @@ export class Bridge {
       throw new ProtocolError('refused', 'release is unsigned; signed artifacts are required for delivery');
     }
 
-    const opId = opIdFor(releaseId, deviceId);
-    const existing = this.store.getOp(opId);
+    const force = body.force === true;
+    // A forced deploy must not collapse into the existing (release, device)
+    // operation: the Host only skips a repeated opId, so a fresh id is what
+    // makes it download/install/launch a new instance and clear a stuck alert.
+    const baseOpId = opIdFor(releaseId, deviceId);
+    const opId = force
+      ? `op_${sha256(`${baseOpId}\nforce\n${randomBytes(16).toString('hex')}`).slice(0, 16)}`
+      : baseOpId;
+    const existing = force ? null : this.store.getOp(opId);
     if (existing) {
       const resent = existing.state === 'pending' ? this.sendDeploy(deviceId, existing) : false;
-      return { opId, state: existing.state, deduplicated: true, resent };
+      return {
+        opId,
+        state: existing.state,
+        deduplicated: true,
+        resent,
+        reinstalled: false,
+        nextAction: existing.state === 'pending' && resent
+          ? 'The existing operation was resent; wait for it with miniapp_status. If the instance is stuck or a Host alert blocks automation, use miniapp_reload.'
+          : 'No new install was started. Use miniapp_reload or miniapp_deploy with force:true to reinstall the same release when the instance is stuck or a Host alert is blocking automation.',
+      };
     }
 
     const now = new Date().toISOString();
@@ -706,7 +773,7 @@ export class Bridge {
     this.store.saveOp(op);
     this.emit({ type: 'status', opId, state: op.state });
     const sent = this.sendDeploy(deviceId, op);
-    return { opId, state: op.state, deduplicated: false, sent };
+    return { opId, state: op.state, deduplicated: false, sent, reinstalled: true, forced: force };
   }
 
   unpair(body) {

@@ -6,7 +6,8 @@
  * socket path and a bridge failure become a shared error code.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -57,19 +58,73 @@ export function defaultBridgeCliPath(): string {
   return PACKAGED_BRIDGE_CLI;
 }
 
-/**
- * Version of the bridge that ships in this package, or null when this is a
- * source checkout without a build. The supervisor uses it as the exact
- * contract for a bridge it may reuse or restart.
- */
+/** Version of the bridge that ships in this package. */
 export function bundledBridgeVersion(): string | null {
-  for (const path of [PACKAGED_BRIDGE_PACKAGE, REPO_BRIDGE_PACKAGE]) {
-    try {
-      const value = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown };
-      if (typeof value.version === 'string' && value.version.length > 0) return value.version;
-    } catch {
-      // Try the next layout.
+  return bundledBridgeIdentity()?.version ?? null;
+}
+
+/** Identity of one bridge copy, matching the `install` object in bridge health. */
+export interface BridgeIdentity {
+  version: string;
+  packageRoot: string;
+  packageHash: string;
+  newestMtimeMs: number;
+  cliPath: string;
+}
+
+function manifestFor(cliPath: string): string | null {
+  const directory = dirname(cliPath);
+  for (const path of [join(directory, 'package.json'), join(dirname(directory), 'package.json')]) {
+    if (existsSync(path)) return path;
+  }
+  return null;
+}
+
+/**
+ * Compute the identity the supervisor expects from a configured bridge CLI.
+ * This mirrors `companion/bridge/src/identity.js`: the hash covers every
+ * JavaScript module beside the CLI, so an in-place same-version upgrade is
+ * visible even when `version` did not change.
+ */
+export function bridgeIdentityFor(cliPath: string): BridgeIdentity | null {
+  const manifest = manifestFor(cliPath);
+  if (manifest === null) return null;
+  try {
+    const moduleDir = dirname(cliPath);
+    const packageRoot = realpathSync(dirname(manifest));
+    const modules = readdirSync(moduleDir).filter((name) => name.endsWith('.js')).sort();
+    if (modules.length === 0) return null;
+    const digest = createHash('sha256');
+    let newestMtimeMs = statSync(manifest).mtimeMs;
+    for (const name of modules) {
+      const path = join(moduleDir, name);
+      digest.update(name);
+      digest.update('\u0000');
+      digest.update(readFileSync(path));
+      digest.update('\u0000');
+      const mtime = statSync(path).mtimeMs;
+      if (mtime > newestMtimeMs) newestMtimeMs = mtime;
     }
+    const value = JSON.parse(readFileSync(manifest, 'utf8')) as { version?: unknown };
+    if (typeof value.version !== 'string' || value.version.length === 0) return null;
+    return {
+      version: value.version,
+      packageRoot,
+      packageHash: digest.digest('hex').slice(0, 24),
+      newestMtimeMs,
+      cliPath: realpathSync(cliPath),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Identity of the bridge bundled or checked out beside this package. */
+export function bundledBridgeIdentity(): BridgeIdentity | null {
+  for (const path of [PACKAGED_BRIDGE_CLI, REPO_BRIDGE_CLI]) {
+    if (!existsSync(path)) continue;
+    const identity = bridgeIdentityFor(path);
+    if (identity !== null) return identity;
   }
   return null;
 }

@@ -106,7 +106,7 @@ function handlers(captureTrees) {
   };
 }
 
-test('preset registers twelve bounded tools, a prompt section, and the sidebar hooks', { timeout: 20_000 }, async () => {
+test('preset registers fourteen bounded tools, a prompt section, and the sidebar hooks', { timeout: 20_000 }, async () => {
   const trees = { value: { role: 'root' } };
   const bridge = await startFakeBridge(handlers(trees), {
     events: 'event: status\ndata: {"opId":"op_1","state":"running"}\n\n',
@@ -117,8 +117,9 @@ test('preset registers twelve bounded tools, a prompt section, and the sidebar h
     apply(ctx, { socketPath: bridge.socketPath, timeoutMs: 2_000 });
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
       'miniapp_action', 'miniapp_build', 'miniapp_capture', 'miniapp_deploy',
-      'miniapp_device', 'miniapp_devices', 'miniapp_diagnostics', 'miniapp_init', 'miniapp_open',
-      'miniapp_screen', 'miniapp_status', 'miniapp_ui',
+      'miniapp_device', 'miniapp_devices', 'miniapp_diagnostics', 'miniapp_doctor',
+      'miniapp_init', 'miniapp_open', 'miniapp_reload', 'miniapp_screen',
+      'miniapp_status', 'miniapp_ui',
     ]);
     assert.equal(sections.length, 1);
     assert.match(sections[0].text, /host-component/);
@@ -158,7 +159,7 @@ test('preset registers twelve bounded tools, a prompt section, and the sidebar h
     }, {});
     assert.equal(tap.ok, false);
     assert.equal(tap.state, 'failed');
-    assert.deepEqual(tap.error, { code: 'target_not_found', message: 'no unique visible target matched' });
+    assert.deepEqual(tap.error, { code: 'target_not_found', message: 'no unique visible target matched', category: 'device' });
 
     const capture = await byName('miniapp_capture').execute({ deviceId: 'dev_1', waitMs: 1_000 }, {});
     assert.equal(capture.ok, true);

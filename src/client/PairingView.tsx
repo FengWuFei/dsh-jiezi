@@ -4,6 +4,7 @@
  * unchanged; the Client never builds an endpoint or talks to the phone.
  */
 
+import { useEffect, useState } from 'react';
 import { pairingPayloadText, type PairingView as PairingState } from '../shared/protocol.js';
 import { QrCode } from './qr.js';
 
@@ -14,6 +15,26 @@ export interface PairingViewProps {
   message: string | null;
   onGenerate: () => void;
   onDisconnect: () => void;
+}
+
+/** One 1 Hz clock for the QR deadline; stops when no payload is waiting. */
+function useRemaining(expiresAt: string | null, active: boolean): number | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active || expiresAt === null) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [active, expiresAt]);
+  if (expiresAt === null) return null;
+  const deadline = Date.parse(expiresAt);
+  return Number.isNaN(deadline) ? null : Math.max(0, deadline - (active ? now : Date.now()));
+}
+
+function countdown(ms: number | null): string {
+  if (ms === null) return '—';
+  const seconds = Math.max(0, Math.ceil(ms / 1_000));
+  const minutes = Math.floor(seconds / 60);
+  return `${String(minutes).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
 function statusLabel(t: (key: string) => string, state: PairingState['state']): string {
@@ -29,6 +50,7 @@ export function PairingView({ t, pairing, busy, message, onGenerate, onDisconnec
   const waiting = pairing.state === 'waiting' && payload !== null;
   const paired = pairing.state === 'paired';
   const expired = pairing.state === 'expired';
+  const remaining = useRemaining(payload?.expiresAt ?? null, waiting);
 
   return (
     <section className="jz-card" aria-labelledby="jz-pairing-title">
@@ -48,7 +70,7 @@ export function PairingView({ t, pairing, busy, message, onGenerate, onDisconnec
               <div><dt>{t('endpoint')}</dt><dd className="jz-mono">{payload.endpoint}</dd></div>
               <div><dt>{t('code')}</dt><dd className="jz-code">{payload.code}</dd></div>
               <div><dt>{t('fingerprint')}</dt><dd className="jz-mono jz-break">{payload.certificateFingerprint ?? '—'}</dd></div>
-              <div><dt>{t('expires')}</dt><dd>{payload.expiresAt}</dd></div>
+              <div><dt>{t('expires')}</dt><dd>{payload.expiresAt} · {t('remaining')} {countdown(remaining)}</dd></div>
             </dl>
             <p className="jz-hint">{t('scanTip')}</p>
             <p className="jz-hint">{t('disconnectHint')}</p>

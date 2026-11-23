@@ -32,6 +32,7 @@ export type JieZiErrorCode =
   | 'device_not_ready'
   | 'bridge_not_configured'
   | 'bridge_version_mismatch'
+  | 'bridge_identity_mismatch'
   | 'consent_required'
   | 'nsh_missing'
   | 'setup_failed'
@@ -116,6 +117,7 @@ export function httpStatusFor(code: JieZiErrorCode): number {
     case 'device_not_ready':
     case 'bridge_not_configured':
     case 'bridge_version_mismatch':
+    case 'bridge_identity_mismatch':
     case 'nsh_missing':
     case 'setup_failed':
     case 'app_not_active':
@@ -145,7 +147,7 @@ const KNOWN_CODES = new Set<JieZiErrorCode>([
   'not_paired', 'device_offline', 'unknown_release', 'unknown_op', 'unknown_evidence', 'unknown_open',
   'pairing_expired', 'pairing_used', 'unknown_pairing_session', 'automation_unavailable',
   'automation_disabled', 'open_unavailable', 'host_binding_required', 'host_launch_failed', 'screen_capture_failed', 'device_not_ready',
-  'bridge_not_configured', 'bridge_version_mismatch', 'consent_required', 'nsh_missing', 'setup_failed',
+  'bridge_not_configured', 'bridge_version_mismatch', 'bridge_identity_mismatch', 'consent_required', 'nsh_missing', 'setup_failed',
   'app_not_active', 'stale_instance', 'op_conflict', 'outside_project_root', 'project_exists', 'init_failed', 'build_failed',
   'busy', 'unsupported', 'unauthorized', 'internal',
 ]);

@@ -45,7 +45,10 @@ for real commands such as `nsh test`, `nsh check`, or `shasum`.
 
 Define the initial screen, actions, observable state changes, and requested
 persistence/error behavior. Ask only about user-owned choices that inspection
-cannot resolve. Read [source-and-capabilities.md](references/source-and-capabilities.md)
+cannot resolve. If the bridge, toolchain, Host version, or pairing state is
+uncertain, call `miniapp_doctor` once and follow its `ready`/`blockers`/
+`nextActions` instead of guessing. Read
+[source-and-capabilities.md](references/source-and-capabilities.md)
 before substantial UI work, unfamiliar APIs, storage, or Host integration.
 
 ### 2. Implement a small, testable slice
@@ -81,14 +84,21 @@ cite the attempted identity of a failed build.
 
 ### 4. Deploy the exact release and wait
 
-Use `miniapp_devices` to select the intended paired target. If needed, call
-`miniapp_device({ action: "ensure_ready", deviceId })`. Pairing, unlocking,
-trusting, and restoring explicitly revoked automation are user actions.
+Use `miniapp_devices` to select the intended paired target. Its
+`jieziPaired`, `coreDevicePaired`, and `hostRunning` fields are separate facts.
+If needed, call `miniapp_device({ action: "ensure_ready", deviceId })`; before
+pairing, `launch_host` starts the installed Host. Pairing, unlocking, trusting,
+and restoring explicitly revoked automation are user actions.
 
 ```text
 miniapp_deploy({ deviceId, releaseId })
 miniapp_status({ opId, wait: true })
 ```
+
+A `deduplicated`/`reinstalled: false` deploy did not start a new install. For a
+stuck instance or a blocking Host alert, use `miniapp_reload({ deviceId })` (or
+`force: true`) and wait on its new opId. `miniapp_open` never restarts a running
+instance.
 
 Read the terminal record. `running` proves only that this exact build launched
 without a runtime error during the startup settle window; it does not prove the
@@ -100,10 +110,12 @@ instead of creating duplicate deployments.
 Start with `miniapp_ui`. Reuse its app/instance/snapshot identity and diagnostic
 cursor where available. For each key step, call `miniapp_action` with a unique
 fresh target and an `expect` (`visibleTestID`, `visibleLabel`, `textContains`,
-or `textEquals`). Use `tap`, `type`, or `scroll` as appropriate; re-observe after
+or `textEquals`, or `checks` for several scoped conditions at once). Hidden
+nodes are omitted by default; do not set `includeHidden` unless diagnosing
+recycled rows. Use `tap`, `type`, or `scroll` as appropriate; re-observe after
 scrolling or stale snapshots. Read `state`, `error`, `verification.passed`,
-inline diagnostics, Host alerts, and runtime errors even when the envelope has
-`ok: true`.
+`snapshotIssues`, inline diagnostics, `hostAlert`/`host`, and runtime errors even
+when the envelope has `ok: true`.
 
 Use `includeFrames: true` for geometry. Use `miniapp_screen` for full-device
 pixels including Host chrome/modals, or `miniapp_capture` for its documented
@@ -120,8 +132,10 @@ For a failed deployment or runtime behavior, call `miniapp_diagnostics` with
 its `opId` or `evidenceId`. Keep evidence scoped to that app instance. Fix
 compile/load/runtime source errors from actual diagnostics; check Host support
 for `host-component`; reduce or correctly declare usage for `refused` rather
-than bypassing it. Stop on `automation_disabled`; select an exact host target
-for `host_binding_required`.
+than bypassing it. `HOST_ALERT_BLOCKING` is a Host-layer alert: do not rebuild
+the same release to dismiss it; update the Host or clear the alert on the phone.
+Stop on `automation_disabled`; select an exact host target for
+`host_binding_required`.
 
 After every source repair, repeat build → deploy → blocking status → semantic
 verification. Do not retry an unchanged refused artifact or silently switch

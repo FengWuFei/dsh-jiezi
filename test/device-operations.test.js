@@ -195,3 +195,63 @@ test('miniapp_open returns the running instance after a restart', { timeout: 15_
     await bridge.close();
   }
 });
+test('launch_host starts the Host with no paired deviceId', { timeout: 15_000 }, async () => {
+  const launches = [];
+  const host = {
+    async listTargets() { return [target()]; },
+    listBindings() { return []; },
+    async resolveBinding() { throw new Error('resolveBinding is not used without deviceId'); },
+    async launch(received) { launches.push(received); },
+    async captureScreen() {},
+    removeBinding() {},
+  };
+  const operations = new JieZiOperations(resolveBridgeSettings({
+    socketPath: '/tmp/jiezi-unused-launch.sock', stateDir: '/tmp/unused-jiezi-state', autoStart: false, timeoutMs: 1_000,
+  }), host);
+  const byId = await operations.device({ action: 'launch_host', hostDeviceId: '00008120-TEST' });
+  assert.equal(byId.ok, true);
+  assert.equal(byId.state, 'launched');
+  assert.equal(byId.hostDeviceId, '00008120-TEST');
+  assert.equal(launches.length, 1);
+
+  const ambiguous = {
+    async listTargets() { return [target(), { ...target(), hostDeviceId: '00008120-OTHER', name: 'Other iPhone' }]; },
+    listBindings() { return []; },
+    async resolveBinding() { throw new Error('unused'); },
+    async launch() {},
+    async captureScreen() {},
+    removeBinding() {},
+  };
+  const ambiguousOperations = new JieZiOperations(resolveBridgeSettings({
+    socketPath: '/tmp/jiezi-unused-launch.sock', stateDir: '/tmp/unused-jiezi-state', autoStart: false, timeoutMs: 1_000,
+  }), ambiguous);
+  await assert.rejects(
+    ambiguousOperations.device({ action: 'launch_host' }),
+    (error) => error.code === 'host_binding_required' && /00008120-TEST/.test(error.message),
+  );
+});
+
+test('launch_host with a paired device waits for Host presence', { timeout: 15_000 }, async () => {
+  const device = {
+    deviceId: 'dev_1', name: 'LY', targetKind: 'physical', online: false,
+    developerMode: false, automation: false, activeApp: null,
+  };
+  const bridge = await startFakeBridge({
+    'GET /v1/devices': () => ({ body: { ok: true, devices: [device] } }),
+  });
+  const launches = { targets: [], bindingRequests: [], bound: true };
+  try {
+    const operations = new JieZiOperations(resolveBridgeSettings({
+      socketPath: bridge.socketPath, stateDir: '/tmp/unused-jiezi-state', autoStart: true, timeoutMs: 2_000,
+    }), fakeHost(device, launches));
+    const result = await operations.device({ action: 'launch_host', deviceId: 'dev_1', waitMs: 2_000 });
+    assert.equal(result.ok, true);
+    assert.equal(result.deviceId, 'dev_1');
+    assert.equal(result.state, 'ready');
+    assert.equal(result.launched, true);
+    assert.equal(result.device.hostRunning, true);
+    assert.equal(launches.targets.length, 1);
+  } finally {
+    await bridge.close();
+  }
+});
