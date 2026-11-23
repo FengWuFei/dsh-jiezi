@@ -1,0 +1,13 @@
+{
+  "name": "jiezi/native",
+  "version": "0.2.0",
+  "description": "The typed runtime adapter for JieZi's host UI set: import NativeUITableView and NativeUICollectionView with the stock nsh build, without an app-side Rust crate.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "type": "module",
+  "sideEffects": true,
+  "jiezi": {
+    "nsh": "0.6.0",
+    "hostComponents": ["jiezi.table@2", "jiezi.collection@1"]
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@local/jiezi-bridge",
+  "version": "0.3.3",
+  "private": true,
+  "type": "module",
+  "description": "Standalone delivery bridge between a DSH-hosted Agent and a paired JieZi iPhone.",
+  "bin": {
+    "jiezi-bridge": "./src/cli.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

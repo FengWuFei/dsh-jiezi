@@ -1,0 +1,27 @@
+{
+  "name": "jiezi-nsh-darwin-arm64",
+  "version": "0.6.0",
+  "description": "Native Shell (nsh) CLI for macOS arm64, published as an optional dependency of dsh-jiezi.",
+  "license": "Apache-2.0",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "bin": {
+    "nsh": "bin/nsh"
+  },
+  "exports": {
+    "./bin/nsh": "./bin/nsh"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE-APACHE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

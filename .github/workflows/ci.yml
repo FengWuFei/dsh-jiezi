@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # The optional toolchain package is 71 MB and is not needed by unit tests;
+      # tests that require nsh skip themselves when it is absent.
+      - run: npm ci --omit=optional
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:bridge

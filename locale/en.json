@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "JieZi mini-app delivery",
+    "description": "A self-contained mini-app skill and miniapp_init template take third-party developers from an empty directory to Native Shell TSX delivery and device verification, with local QR pairing in the sidebar.",
+    "detail": "docs/DETAIL.md"
+  }
+}

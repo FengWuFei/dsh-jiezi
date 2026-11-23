@@ -1,0 +1,7 @@
+.nsh/
+node_modules/
+out/
+.build/
+dist/
+target/
+*.nshpkg

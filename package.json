@@ -1,0 +1,88 @@
+{
+  "name": "dsh-jiezi",
+  "version": "1.0.0",
+  "description": "芥子开发模式：DeepSeek Harness 上的小程序开发与交付插件（初始化、构建、签名、真机调试与侧栏配对面板）。",
+  "type": "module",
+  "license": "MIT",
+  "author": "FengWuFei",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "miniapp",
+    "native-shell",
+    "jiezi",
+    "芥子",
+    "小程序"
+  ],
+  "homepage": "https://github.com/FengWuFei/dsh-jiezi#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FengWuFei/dsh-jiezi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/FengWuFei/dsh-jiezi/issues"
+  },
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.2-rc.1 <0.3.0"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./tools": "./lib/tools.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "docs",
+    "skills",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.js",
+    "test:bridge": "node --test vendor/bridge/test/*.test.js",
+    "index": "node scripts/build-index.mjs",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "qrcode-generator": "^2.0.4"
+  },
+  "optionalDependencies": {
+    "jiezi-nsh-darwin-arm64": "0.6.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-plugin-market-index": "^0.2.2-rc.1",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
