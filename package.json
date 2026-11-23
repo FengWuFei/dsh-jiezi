@@ -1,6 +1,6 @@
 {
   "name": "dsh-jiezi",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "芥子开发模式：DeepSeek Harness 上的小程序开发与交付插件（初始化、构建、签名、真机调试与侧栏配对面板）。",
   "type": "module",
   "license": "MIT",

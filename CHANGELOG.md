@@ -3,6 +3,22 @@
 本文件记录每个公开发布版本的变更；格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.0.2] - 2026-11-23
+
+### 变更
+
+- 侧栏面板改用 DSH 官方 UI 原子样式：状态胶囊取官方 `Tag` 的几何与配色（`999px`、`11px/17px`、
+  `10–12%` 同色着色底 + 同色文字），按钮取官方 `Button` 紧凑尺寸（28px 高、`radius-sm`、
+  透明底 + `0.5px` 内描边、hover/active 用官方交互色），主按钮改用会随主题翻转的
+  `label-primary-foreground`。错误条从实心红底改为 `10%` 红色底，与官方结果条一致。
+
+### 修复
+
+- 「运行中」等状态标签此前是 `state-success-400` 实心绿底 + 近黑文字，与 DSH 官方 UI 的
+  标签风格不一致；`刷新` 等按钮此前是 1px 边框 + 灰底的重描边样式，尺寸也不对齐官方控件。
+
+[1.0.2]: https://github.com/FengWuFei/dsh-jiezi/releases/tag/v1.0.2
+
 ## [1.0.1] - 2026-11-23
 
 ### 修复

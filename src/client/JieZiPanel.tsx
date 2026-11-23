@@ -248,13 +248,17 @@ const CSS = `
 .jz-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .jz-break { overflow-wrap: anywhere; }
 .jz-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 18px; letter-spacing: 2px; font-weight: 600; }
-.jz-pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 9px; font-size: 12px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); white-space: nowrap; }
-.jz-pill-waiting { background: var(--dsw-alias-state-warn-tertiary); color: var(--dsw-alias-state-warn-label); }
-.jz-pill-paired, .jz-pill-running, .jz-pill-done { background: var(--dsw-alias-state-success-secondary); color: var(--dsw-alias-label-primary); }
-.jz-pill-expired, .jz-pill-failed, .jz-pill-timeout, .jz-pill-unsupported { background: var(--dsw-alias-state-error-secondary); color: var(--dsw-alias-label-primary); }
-.jz-pill-pending { background: var(--dsw-alias-bg-layer-2); }
-.jz-badge { display: inline-flex; align-items: center; border-radius: 6px; padding: 1px 7px; font-size: 11px; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); border: 1px solid var(--dsw-alias-border-l1); }
-.jz-badge-warn { color: var(--dsw-alias-state-warn-label); border-color: var(--dsw-alias-state-warn-primary); }
+/* Status capsule = the official Tag primitive: fixed 999px geometry and
+   11px/17px type, palette only per tone. Every tone tints its own state token at
+   10-12% and reuses it as ink, so fill and text stay one colour in both themes;
+   saturated fills are reserved for warnings and errors of the banner kind. */
+.jz-pill { display: inline-flex; align-items: center; border-radius: 999px; corner-shape: round; padding: 1px 8px; font-size: 11px; line-height: 17px; font-weight: 500; white-space: nowrap; background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary); }
+.jz-pill-waiting { background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent); color: var(--dsw-alias-state-warn-primary); }
+.jz-pill-paired, .jz-pill-running, .jz-pill-done { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent); color: var(--dsw-alias-state-success-primary); }
+.jz-pill-expired, .jz-pill-failed, .jz-pill-timeout, .jz-pill-unsupported { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent); color: var(--dsw-alias-state-error-primary); }
+.jz-pill-pending { background: var(--dsw-alias-bg-module-platform); }
+.jz-badge { display: inline-flex; align-items: center; border-radius: 999px; corner-shape: round; padding: 1px 8px; font-size: 11px; line-height: 17px; font-weight: 500; white-space: nowrap; border: 0.5px solid var(--dsw-alias-border-l4); color: var(--dsw-alias-label-tertiary); background: transparent; }
+.jz-badge-warn { border-color: transparent; background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 12%, transparent); color: var(--dsw-alias-state-warn-primary); }
 .jz-pairing { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
 .jz-qr { padding: 10px; border-radius: 10px; background: var(--dsw-alias-bg-layer-2); border: 1px solid var(--dsw-alias-border-l1); }
 .jz-pairing-body { flex: 1 1 300px; min-width: 240px; }
@@ -264,13 +268,18 @@ const CSS = `
 .jz-facts dd { margin: 0; font-size: 12px; color: var(--dsw-alias-label-primary); }
 .jz-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .jz-actions-end { justify-content: flex-end; margin-top: 8px; }
-.jz-button { appearance: none; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+/* Buttons = the official Button primitive at the compact size: 28px control,
+   radius-sm, transparent fill with a 0.5px inset hairline, hover/active from the
+   interactive aliases. The primary variant is the only saturated fill and takes
+   the foreground token that flips with the theme. */
+.jz-button { box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 28px; padding: 0 10px; font: inherit; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-primary); background: transparent; border: 0.5px solid transparent; border-radius: var(--dsw-radius-sm); box-shadow: inset 0 0 0 var(--dsh-hairline-width, 0.5px) var(--dsw-alias-border-l3); cursor: pointer; transition: background-color 100ms ease; }
 .jz-button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
-.jz-button:disabled { opacity: .55; cursor: default; }
-.jz-button-primary { background: var(--dsw-alias-button-primary-fill); border-color: transparent; color: var(--dsw-alias-label-on-color); }
-.jz-button-primary:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
+.jz-button:active:not(:disabled) { background: var(--dsw-alias-interactive-bg-active); }
+.jz-button:disabled { opacity: .4; cursor: not-allowed; }
+.jz-button-primary { background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); box-shadow: none; }
+.jz-button-primary:hover:not(:disabled), .jz-button-primary:active:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
 .jz-message { margin: 10px 0 0; font-size: 12px; color: var(--dsw-alias-label-secondary); }
-.jz-error { margin: 0 0 16px; padding: 10px 12px; border-radius: 8px; font-size: 13px; background: var(--dsw-alias-state-error-secondary); color: var(--dsw-alias-label-primary); }
+.jz-error { margin: 0 0 16px; padding: 8px 12px; border-radius: var(--dsw-radius-md); font-size: 13px; line-height: 20px; background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent); color: var(--dsw-alias-label-primary); }
 .jz-error-inline { color: var(--dsw-alias-state-error-primary); font-size: 12px; }
 .jz-warn { margin: 0 0 16px; padding: 10px 12px; border-radius: 8px; font-size: 12px; background: var(--dsw-alias-state-warn-tertiary); color: var(--dsw-alias-state-warn-label); }
 .jz-checks { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
