@@ -101,8 +101,10 @@ usage. App-facing view names follow `Native` + UIKit class, such as
 `NativeUITableView`; wire ids remain separate contracts. Check `host.params.components` and retain the project's established
 fallback when a component is optional or unavailable in headless tests.
 
-A new native component or permission requires a Host release and explicit user
-approval. Do not imitate it with private Host calls, Swift in the mini-app, or
+The reviewed Host components (`NativeUITableView`,
+`NativeUICollectionView`) are registered by current Hosts and need no per-app
+grant. A new native component or permission requires a Host release and explicit
+user approval. Do not imitate it with private Host calls, Swift in the mini-app, or
 an unrequested dependency. Never put provider credentials, pairing codes,
 tokens, private keys, or signing material in source, metadata, diagnostics,
 screenshots, or logs.

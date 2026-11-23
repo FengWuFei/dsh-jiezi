@@ -18,7 +18,8 @@ install, launch, observation, and diagnostic results.
 - Do not edit bridge state, DSH profiles, signing material, generated `.nsh`
   files, or files outside the project. Never seek or embed credentials.
 - Use only capabilities and Host contracts the installed app actually supports.
-  New native capabilities require a Host release and explicit user approval.
+  Reviewed `jiezi/native` components need no per-app grant on a current Host;
+  a new native capability requires a Host release and explicit user approval.
 - Keep the existing app id and unrelated working code unless the task requires
   a different app. Do not bypass permission, pairing, or signature refusals.
 
