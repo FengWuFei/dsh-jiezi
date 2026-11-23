@@ -21,5 +21,23 @@ jobs:
       # tests that require nsh skip themselves when it is absent.
       - run: npm ci --omit=optional
       - run: npm run typecheck
-      - run: npm test
-      - run: npm run test:bridge
+      - name: Test
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee /tmp/test.log
+      - name: Test the vendored bridge
+        run: |
+          set -o pipefail
+          npm run test:bridge 2>&1 | tee /tmp/bridge-test.log
+      # The Actions log needs an authenticated download; the job summary keeps
+      # the failing assertions readable right on the run page.
+      - name: Show failing assertions
+        if: failure()
+        run: |
+          for log in /tmp/test.log /tmp/bridge-test.log; do
+            [ -f "$log" ] || continue
+            echo "### $(basename "$log")" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E '^not ok|^# |AssertionError|Error:|expected|actual' "$log" | tail -n 80 >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          done
