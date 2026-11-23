@@ -40,14 +40,10 @@
 | --- | --- | --- | --- |
 | The official standard Agent capabilities plus 14 `miniapp_*` tools—not a closed mini-app-only shell. | From an empty directory to a signed Release, then installation, launch, and status on a device. | Inspect the UI tree, tap, type, scroll, and assert with screenshots and diagnostics as evidence. | QR codes are rendered locally. Keys, devices, and delivery records stay on your computer; initialization is always explicit. |
 
-```mermaid
-flowchart LR
-    Idea["A single prompt"] --> Code["Native Shell TSX"]
-    Code --> Build["Immutable Release<br/>Build · Sign · SHA-256"]
-    Build --> Device["Paired device<br/>Install · Launch"]
-    Device --> Verify["On-device verification<br/>UI tree · Actions · Assertions"]
-    Verify -->|"Diagnostic evidence drives repair"| Code
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/delivery-loop-en-dark.svg" />
+  <img src="./docs/assets/delivery-loop-en.svg" alt="The JieZi delivery loop: prompt, TSX source, immutable Release, paired device, on-device verification, and evidence-driven source repair" width="100%" />
+</picture>
 
 The bundled `jiezi-miniapp` Skill guides the Agent through this loop: **edited source or a successful compile is not delivery; the target flow must be verified on the intended device.**
 

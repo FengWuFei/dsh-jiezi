@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 280" role="img" aria-labelledby="title desc">
+  <title id="title">The JieZi mini-app delivery loop</title>
+  <desc id="desc">From a single prompt to Native Shell TSX source, an immutable Release, a paired device, and on-device verification, then back to source repair through diagnostic evidence.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#98A2B3"/>
+    </marker>
+    <style>
+      .eyebrow { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: 2px; fill: #3D57D6; }
+      .topnote { font: 500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #667085; }
+      .card { fill: #F8F9FC; stroke: #D9DEE8; stroke-width: 1.2; }
+      .step { font: 700 11px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: 1.4px; fill: #3D57D6; }
+      .title { font: 650 20px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #101828; }
+      .subtitle { font: 500 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #475467; }
+      .meta { font: 600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: .8px; fill: #98A2B3; }
+      .flow { fill: none; stroke: #98A2B3; stroke-width: 1.5; marker-end: url(#arrow); }
+      .loop { fill: none; stroke: #6E8CFF; stroke-width: 1.5; marker-end: url(#arrow); }
+      .loop-label { font: 600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; letter-spacing: .4px; fill: #3D57D6; }
+    </style>
+  </defs>
+
+  <text x="36" y="28" class="eyebrow">FROM PROMPT TO PROOF</text>
+  <text x="1164" y="28" text-anchor="end" class="topnote">BUILD → DELIVER → OBSERVE → REPAIR</text>
+
+  <rect x="36" y="58" width="200" height="116" rx="14" class="card"/>
+  <path d="M54 58 H88" stroke="#6E8CFF" stroke-width="3" stroke-linecap="round"/>
+  <text x="54" y="84" class="step">01 · IDEA</text>
+  <text x="54" y="117" class="title">A single prompt</text>
+  <text x="54" y="141" class="subtitle">Define the acceptance flow</text>
+  <text x="54" y="160" class="meta">DEFINE THE FLOW</text>
+
+  <path d="M242 116 H260" class="flow"/>
+
+  <rect x="268" y="58" width="200" height="116" rx="14" class="card"/>
+  <path d="M286 58 H320" stroke="#6E8CFF" stroke-width="3" stroke-linecap="round"/>
+  <text x="286" y="84" class="step">02 · SOURCE</text>
+  <text x="286" y="117" class="title">Native Shell TSX</text>
+  <text x="286" y="141" class="subtitle">Initialize · Edit · Test</text>
+  <text x="286" y="160" class="meta">INIT · EDIT</text>
+
+  <path d="M474 116 H492" class="flow"/>
+
+  <rect x="500" y="58" width="200" height="116" rx="14" class="card"/>
+  <path d="M518 58 H552" stroke="#3D57D6" stroke-width="3" stroke-linecap="round"/>
+  <text x="518" y="84" class="step">03 · RELEASE</text>
+  <text x="518" y="117" class="title">Immutable Release</text>
+  <text x="518" y="141" class="subtitle">Build · Sign · SHA-256</text>
+  <text x="518" y="160" class="meta">ONE EXACT ARTIFACT</text>
+
+  <path d="M706 116 H724" class="flow"/>
+
+  <rect x="732" y="58" width="200" height="116" rx="14" class="card"/>
+  <path d="M750 58 H784" stroke="#6E8CFF" stroke-width="3" stroke-linecap="round"/>
+  <text x="750" y="84" class="step">04 · DEVICE</text>
+  <text x="750" y="117" class="title">Paired device</text>
+  <text x="750" y="141" class="subtitle">Install · Launch · Report</text>
+  <text x="750" y="160" class="meta">PAIRED IPHONE</text>
+
+  <path d="M938 116 H956" class="flow"/>
+
+  <rect x="964" y="58" width="200" height="116" rx="14" class="card"/>
+  <path d="M982 58 H1016" stroke="#3D57D6" stroke-width="3" stroke-linecap="round"/>
+  <text x="982" y="84" class="step">05 · VERIFY</text>
+  <text x="982" y="117" class="title">On-device proof</text>
+  <text x="982" y="141" class="subtitle">UI · Actions · Assertions</text>
+  <text x="982" y="160" class="meta">SCREEN · DIAGNOSTICS</text>
+
+  <path d="M1064 174 V204 Q1064 222 1046 222 H386 Q368 222 368 204 V181" class="loop"/>
+  <text x="716" y="253" text-anchor="middle" class="loop-label">miniapp_diagnostics · EVIDENCE-DRIVEN REPAIR</text>
+</svg>

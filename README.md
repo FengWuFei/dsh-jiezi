@@ -40,14 +40,10 @@
 | --- | --- | --- | --- |
 | 官方标准 Agent 能力 + 14 个 `miniapp_*` 工具，不是封闭的小程序工具集。 | 从空目录到已签名 Release，再到设备安装、启动与状态回传。 | 读取界面树，执行点击、输入、滚动和断言，结合截图与诊断定位问题。 | 二维码在本地生成；密钥、设备与交付记录保存在本机，初始化由你主动触发。 |
 
-```mermaid
-flowchart LR
-    Idea["一句需求"] --> Code["Native Shell TSX"]
-    Code --> Build["不可变 Release<br/>构建 · 签名 · SHA-256"]
-    Build --> Device["配对设备<br/>安装 · 启动"]
-    Device --> Verify["真机验证<br/>界面树 · 操作 · 断言"]
-    Verify -->|"诊断证据，驱动修复"| Code
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/delivery-loop-zh-dark.svg" />
+  <img src="./docs/assets/delivery-loop-zh.svg" alt="芥子交付闭环：需求、TSX 源码、不可变 Release、配对设备、真机验证，再依据诊断修复源码" width="100%" />
+</picture>
 
 内置的 `jiezi-miniapp` Skill 会引导 Agent 遵循这条路径：**源码修改或编译成功，不等于交付完成；目标流程经过设备验证，才算完成。**
 
