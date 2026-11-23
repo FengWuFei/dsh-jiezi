@@ -14,7 +14,12 @@ import type { ClientContext, PanelIconProps } from './types.js';
 /** Services this Client plugin needs. */
 export const inject = ['slots', 'locale'];
 
-/** Sidebar glyph: three tiles and one highlighted tile, matching the bundle icon. */
+/**
+ * Sidebar glyph: three filled tiles and one open slot, the same 2×2 grid as the
+ * bundle icon. The sidebar renders panellist glyphs at 16–18px, where a star
+ * inside a 5px tile only ever resolves to a smudge, so the slot carries no
+ * detail; the silhouette alone keeps the two marks one family.
+ */
 export function JieZiIcon({ size }: PanelIconProps) {
   return (
     <svg
@@ -26,15 +31,11 @@ export function JieZiIcon({ size }: PanelIconProps) {
       style={{ display: 'block', pointerEvents: 'none' }}
     >
       <g fill="currentColor">
-        <rect x="3.5" y="3.5" width="7" height="7" rx="2" />
-        <rect x="13.5" y="3.5" width="7" height="7" rx="2" />
-        <rect x="3.5" y="13.5" width="7" height="7" rx="2" />
+        <rect x="3" y="3" width="7.6" height="7.6" rx="2.2" />
+        <rect x="13.4" y="3" width="7.6" height="7.6" rx="2.2" />
+        <rect x="3" y="13.4" width="7.6" height="7.6" rx="2.2" />
       </g>
-      <rect x="13.5" y="13.5" width="7" height="7" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      <path
-        d="M17 15.1l.7 1.5 1.6.2-1.2 1.1.3 1.6-1.4-.8-1.4.8.3-1.6-1.2-1.1 1.6-.2z"
-        fill="currentColor"
-      />
+      <rect x="13.4" y="13.4" width="7.6" height="7.6" rx="2.2" fill="none" stroke="currentColor" strokeWidth="1.4" />
     </svg>
   );
 }
