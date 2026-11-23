@@ -42,15 +42,17 @@ jobs:
           }
       - run: npm run typecheck
       - run: npm test
+      # Trusted publishing: GitHub's OIDC token authorizes this exact repository
+      # and workflow on npm, so the repository stores no long-lived npm token.
+      # Requires npm >= 11.5 and a configured trusted publisher on npmjs.com.
       - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          npm install -g npm@latest
           version="$(node -p "require('./package.json').version")"
           if npm view "dsh-jiezi@${version}" version >/dev/null 2>&1; then
             echo "dsh-jiezi@${version} is already published; skipping"
           else
-            npm publish --provenance --access public
+            npm publish --access public
           fi
       - name: Update index.json from npm
         run: npm run index
