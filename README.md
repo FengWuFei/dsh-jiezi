@@ -117,9 +117,12 @@ node scripts/sync-bridge.mjs --from /path/to/JieZi/companion/bridge
 ```
 
 发布流程：改版本号（`npm version patch|minor|major`）→ 推送提交与 tag。tag 触发
-[Release 工作流](.github/workflows/release.yml)：跑测试、发布到 npm、生成/更新 `index.json` 并提交回来、
-把 tgz 挂到 GitHub Release。仓库里不存 npm 令牌 —— 发布靠 npm 的 trusted publishing（GitHub OIDC），
-在 npm 的包设置里把本仓库的 `release.yml` 登记为可信发布者即可。
+[Release 工作流](.github/workflows/release.yml)：跑测试、通过 GitHub OIDC Trusted Publishing 发布带
+provenance 的 npm 包、确认 registry 已更新、生成/更新 `index.json` 并提交回 `main`，最后把 tgz 挂到
+GitHub Release。仓库里不存 npm 令牌 —— 在 npm 的包设置里把本仓库的 `release.yml` 登记为可信发布者即可。
+
+已有 tag 需要重跑时，打开 **Actions → Release → Run workflow**，输入同一个 `v*` tag。工作流会检查该 tag
+的源码，但只把生成的索引应用到最新 `main`；已有 Release 会更新附件，因此不需要删除或移动 tag。
 
 `jiezi-nsh-darwin-arm64` 是单独发布的工具链包，源码见 `packages/nsh-darwin-arm64/`，产物由
 `scripts/pack-nsh.mjs` 从本机 `NSH_TOOLCHAIN` 打出，二进制不进 git。

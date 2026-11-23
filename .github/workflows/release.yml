@@ -1,16 +1,26 @@
 name: Release
 
-# Pushing a `v*` tag is the only way to release:
+# Pushing a `v*` tag is the normal way to release:
 #
 #   npm version patch|minor|major
 #   git push --follow-tags
 #
-# The job fails unless the tag equals the package version, so a tag can never
-# ship a different build than the one in the repository.
+# For a retry, use Actions → Release → Run workflow and enter the existing tag.
+# The tag is never deleted or moved. The job fails unless the tag equals the
+# package version, so it cannot ship a different build than the tagged source.
 
 on:
   push:
     tags: ['v*']
+  # Re-run an existing tag after a registry/configuration failure without
+  # deleting or moving the tag. Dispatch uses the default-branch workflow but
+  # checks out the requested tag for every build, test, and package step.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (for example v1.1.0)'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -23,9 +33,12 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -36,8 +49,8 @@ jobs:
       - name: Verify the tag matches package.json
         run: |
           version="$(node -p "require('./package.json').version")"
-          test "v${version}" = "${GITHUB_REF_NAME}" || {
-            echo "tag ${GITHUB_REF_NAME} does not match package version v${version}" >&2
+          test "v${version}" = "${RELEASE_TAG}" || {
+            echo "tag ${RELEASE_TAG} does not match package version v${version}" >&2
             exit 1
           }
       - run: npm run typecheck
@@ -52,12 +65,37 @@ jobs:
           if npm view "dsh-jiezi@${version}" version >/dev/null 2>&1; then
             echo "dsh-jiezi@${version} is already published; skipping"
           else
-            npm publish --access public
+            npm publish --provenance --access public
           fi
-      - name: Update index.json from npm
-        run: npm run index
-      - name: Commit index.json
+      - name: Verify the npm registry is current
         run: |
+          version="$(node -p "require('./package.json').version")"
+          latest=""
+          for attempt in {1..18}; do
+            latest="$(npm view dsh-jiezi dist-tags.latest 2>/dev/null || true)"
+            if [ "${latest}" = "${version}" ]; then
+              echo "npm latest is dsh-jiezi@${version}"
+              exit 0
+            fi
+            echo "Waiting for npm registry (attempt ${attempt}/18; latest=${latest:-unavailable})"
+            sleep 10
+          done
+          echo "npm registry did not expose dsh-jiezi@${version} as latest" >&2
+          exit 1
+      - name: Pack the offline tarball
+        run: npm pack
+      - name: Update index.json from npm
+        run: |
+          npm run index
+          cp index.json "${RUNNER_TEMP}/jiezi-index.json"
+      - name: Commit index.json on the latest main
+        run: |
+          # A manually dispatched tag may be behind main. Apply only the
+          # generated index to a fresh main checkout; never push the old tag
+          # tree (or an old workflow) back to main.
+          git restore --source=HEAD -- index.json
+          git switch -C release-index origin/main
+          cp "${RUNNER_TEMP}/jiezi-index.json" index.json
           if git diff --quiet -- index.json; then
             echo "index.json already matches npm"
             exit 0
@@ -65,11 +103,16 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git add index.json
-          git commit -m "chore: index ${GITHUB_REF_NAME}"
+          git commit -m "chore: index ${RELEASE_TAG}"
           git push origin HEAD:main
-      - name: Pack the offline tarball
-        run: npm pack
-      - name: Create the GitHub release
+      - name: Create or update the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" ./*.tgz --title "${GITHUB_REF_NAME}" --generate-notes
+        run: |
+          # Keep reruns idempotent: an existing release gets the exact tarball
+          # from this tag uploaded again instead of failing the whole workflow.
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release upload "${RELEASE_TAG}" ./*.tgz --clobber
+          else
+            gh release create "${RELEASE_TAG}" ./*.tgz --title "${RELEASE_TAG}" --generate-notes
+          fi
