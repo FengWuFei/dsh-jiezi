@@ -151,6 +151,31 @@ export interface DeviceView {
   } | null;
 }
 
+/** The durable device registry, not a forgotten QR session, owns global pairing. */
+export function durablePairingView(devices: Array<Pick<DeviceView, 'deviceId'>>, bridgeName: string | null = null): PairingView {
+  return {
+    payload: null,
+    state: devices.length > 0 ? 'paired' : 'none',
+    deviceId: devices.length === 1 ? devices[0].deviceId : null,
+    bridgeName,
+    expiresAt: null,
+  };
+}
+
+/**
+ * Resolve the panel's optimistic QR state with the Host's latest global view.
+ * A durable Host projection supersedes terminal local QR state, so an expired
+ * card cannot trigger regeneration after an upgrade. An explicitly waiting
+ * add-device flow remains visible; `none` always clears an obsolete local flow.
+ */
+export function selectPairingView(local: PairingView | null, host: PairingView): PairingView {
+  if (local === null) return host;
+  const durableHost = host.payload === null && (host.state === 'paired' || host.state === 'none');
+  if (!durableHost) return local;
+  if (local.state === 'waiting' && host.state === 'paired') return local;
+  return host;
+}
+
 /** One recent delivery operation. */
 export interface DeploymentView {
   opId: string;

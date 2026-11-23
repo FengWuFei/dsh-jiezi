@@ -4,9 +4,10 @@
  * bridge calls and report the same bounded results.
  *
  * The bridge stays authoritative for devices, operations, evidence, pairing,
- * and automation. This layer only bounds results, remembers the newest pairing
- * session so the QR can be shown again, and keeps a small recent-automation
- * list for the panel because the bridge protocol exposes no list endpoint.
+ * and automation. This layer bounds results, restores global pairing from the
+ * durable device registry after a Host reload, remembers an explicit QR flow,
+ * and keeps a small recent-automation list for the panel because the bridge
+ * protocol exposes no list endpoint.
  */
 
 import {
@@ -21,6 +22,7 @@ import {
   boundedNumber,
   deploymentView,
   deviceView,
+  durablePairingView,
   evaluateExpectation,
   formatOutline,
   hostCompatibility,
@@ -310,6 +312,7 @@ export class JieZiOperations {
       error: null,
     };
     let devices: DeviceView[] = [];
+    let devicesRead = false;
     let deployments: DeploymentView[] = [];
 
     try {
@@ -355,6 +358,7 @@ export class JieZiOperations {
       const [deviceResult, opResult] = await Promise.allSettled([this.devices(), this.operation({})]);
       if (deviceResult.status === 'fulfilled') {
         devices = deviceResult.value.devices;
+        devicesRead = true;
       } else {
         warnings.push('devices could not be read from the bridge');
       }
@@ -376,7 +380,7 @@ export class JieZiOperations {
         bridgeCliPath: this.settings.bridgeCliPath,
         bridgeCliAvailable: existsSync(this.settings.bridgeCliPath),
       },
-      pairing: await this.currentPairingView(),
+      pairing: await this.currentPairingView(devicesRead ? devices : undefined, bridge.bridgeName),
       devices,
       deployments,
       automation: this.automationHistory.slice(0, MAX_AUTOMATION_HISTORY),
@@ -423,7 +427,8 @@ export class JieZiOperations {
   async pairingStatus(args: { sessionId?: string } = {}): Promise<{ ok: true; pairing: PairingView }> {
     const requested = args.sessionId === undefined ? this.lastPairing?.payload.sessionId : requireString(args.sessionId, 'sessionId', 128);
     if (requested === undefined) {
-      return { ok: true, pairing: { payload: null, state: 'none', deviceId: null, bridgeName: null, expiresAt: null } };
+      const { devices } = await this.devices();
+      return { ok: true, pairing: durablePairingView(devices) };
     }
     try {
       const response = recordOf(
@@ -475,6 +480,7 @@ export class JieZiOperations {
     const deviceId = requireString(body.deviceId, 'deviceId', 256);
     try {
       await this.client.post('/v1/unpair', { deviceId });
+      this.lastPairing = null;
       this.deviceHost.removeBinding(deviceId);
       return { ok: true, deviceId };
     } catch (error) {
@@ -488,20 +494,34 @@ export class JieZiOperations {
     }
   }
 
-  private async currentPairingView(): Promise<PairingView> {
-    if (this.lastPairing === null) {
-      return { payload: null, state: 'none', deviceId: null, bridgeName: null, expiresAt: null };
-    }
+  /**
+   * Project the global pairing state after a Host/plugin reload. `devices` is
+   * undefined when the registry could not be read; an empty array is an
+   * authoritative empty registry. A waiting QR remains an explicit operation,
+   * but stale QR state never hides a still-paired durable device.
+   */
+  private async currentPairingView(devices?: DeviceView[], bridgeName: string | null = null): Promise<PairingView> {
+    const remembered = this.lastPairing;
+    const durable = devices === undefined
+      ? null
+      : durablePairingView(devices, bridgeName ?? remembered?.bridgeName ?? null);
+    if (remembered === null) return durable ?? durablePairingView([], bridgeName);
     try {
-      const { pairing } = await this.pairingStatus({});
-      return pairing;
+      const { pairing } = await this.pairingStatus({ sessionId: remembered.payload.sessionId });
+      if (devices === undefined || pairing.state === 'waiting') return pairing;
+      const stillPaired = pairing.state === 'paired' && pairing.deviceId !== null
+        && devices.some((device) => device.deviceId === pairing.deviceId);
+      if (stillPaired) return { ...pairing, bridgeName: pairing.bridgeName ?? bridgeName };
+      if (pairing.state === 'expired' && devices.length === 0) return pairing;
+      return durable ?? durablePairingView(devices, bridgeName ?? remembered.bridgeName);
     } catch {
+      if (durable !== null && devices !== undefined && devices.length > 0) return durable;
       return {
-        payload: this.lastPairing.payload,
+        payload: remembered.payload,
         state: 'expired',
         deviceId: null,
-        bridgeName: this.lastPairing.bridgeName,
-        expiresAt: this.lastPairing.payload.expiresAt,
+        bridgeName: remembered.bridgeName,
+        expiresAt: remembered.payload.expiresAt,
       };
     }
   }
@@ -809,7 +829,7 @@ export class JieZiOperations {
         minimumVersion: MIN_HOST_VERSION,
         devices: hosts,
       },
-      pairing: await this.currentPairingView(),
+      pairing: await this.currentPairingView(devices),
       setup,
       blockers,
       warnings,

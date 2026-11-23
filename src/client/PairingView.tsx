@@ -78,16 +78,21 @@ export function PairingView({ t, pairing, busy, message, onGenerate, onDisconnec
         </div>
       ) : (
         <div className="jz-pairing-empty">
-          <p className="jz-muted">{paired ? `${t('pairingPaired')} · ${pairing.deviceId ?? ''}` : expired ? t('pairingExpired') : t('pairingIdle')}</p>
+          <p className="jz-muted">
+            {paired
+              ? `${t('pairingPaired')}${pairing.deviceId !== null ? ` · ${pairing.deviceId}` : ''}`
+              : expired ? t('pairingExpired') : t('pairingIdle')}
+          </p>
           {!paired && !expired ? <p className="jz-hint">{t('scanTip')}</p> : null}
+          {paired ? <p className="jz-hint">{t('pairingContinued')}</p> : null}
         </div>
       )}
 
       {message !== null ? <p className="jz-message" role="status">{message}</p> : null}
 
       <div className="jz-actions">
-        <button type="button" className="jz-button jz-button-primary" onClick={onGenerate} disabled={busy}>
-          {t('regenerate')}
+        <button type="button" className={paired ? 'jz-button' : 'jz-button jz-button-primary'} onClick={onGenerate} disabled={busy}>
+          {paired ? t('pairAnother') : t('regenerate')}
         </button>
         {waiting ? (
           <button type="button" className="jz-button" onClick={onDisconnect} disabled={busy}>

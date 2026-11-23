@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 /**
@@ -89,4 +90,15 @@ test('client bundle wraps __ModuleLoader__ and registers the sidebar and main sl
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
   }
+});
+
+test('client bundle explains pairing continuity and labels all durable devices', () => {
+  const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
+  const locales = readFileSync(new URL('../src/client/locales.ts', import.meta.url), 'utf8');
+  assert.match(locales, /插件更新后无需重新扫码/);
+  assert.match(locales, /配对另一台 iPhone/);
+  assert.match(locales, /已配对设备/);
+  assert.match(bundle, /pairingContinued/);
+  assert.match(bundle, /pairAnother/);
+  assert.match(bundle, /Existing devices keep their original credential/);
 });

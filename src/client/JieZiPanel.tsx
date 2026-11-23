@@ -13,6 +13,8 @@ import {
   API_ROUTES,
   STATUS_POLL_MS,
   PAIRING_POLL_MS,
+  durablePairingView,
+  selectPairingView,
   type AutomationView,
   type DeploymentView,
   type DeviceView,
@@ -363,7 +365,8 @@ export function JieZiPanel({ t }: MainPanelProps) {
   }, [refresh]);
 
   const pairing = useMemo<PairingState>(() => {
-    const base = localPairing ?? status?.pairing ?? EMPTY_PAIRING;
+    const host = status?.pairing ?? EMPTY_PAIRING;
+    const base = selectPairingView(localPairing, host);
     if (base.payload !== null && base.payload.sessionId === dismissedSession) return EMPTY_PAIRING;
     return base;
   }, [localPairing, status, dismissedSession]);
@@ -515,6 +518,18 @@ export function JieZiPanel({ t }: MainPanelProps) {
     if (!mounted.current) return;
     setUnpairing(null);
     if (result.ok) {
+      setLocalPairing(null);
+      setDismissedSession(null);
+      autoRef.current = null;
+      setStatus((previous) => {
+        if (previous === null) return previous;
+        const remaining = previous.devices.filter((device) => device.deviceId !== deviceId);
+        return {
+          ...previous,
+          devices: remaining,
+          pairing: durablePairingView(remaining, previous.pairing.bridgeName),
+        };
+      });
       setDeviceMessage(translate('unpairDone'));
       void refresh(true);
     } else {
