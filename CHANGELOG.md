@@ -3,6 +3,15 @@
 本文件记录每个公开发布版本的变更；格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.0.1] - 2026-11-23
+
+### 修复
+
+- 随包桥接按 `jiezi-nsh-darwin-arm64` 查找可选工具链。1.0.0 里还留着内部名
+  `@local/jiezi-nsh`，导致装好可选依赖后 `nsh` 仍然「找不到」。
+
+[1.0.1]: https://github.com/FengWuFei/dsh-jiezi/releases/tag/v1.0.1
+
 ## [1.0.0] - 2026-11-23
 
 首个公开发布。对应内部 `@local/jiezi-builder` 0.8.3 的能力，包名独立为 `dsh-jiezi`，

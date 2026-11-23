@@ -25,7 +25,7 @@ export function releaseIdFor(sourceHash, buildNumber) {
 }
 
 const NSH_BINARY = process.platform === 'win32' ? 'nsh.exe' : 'nsh';
-const NSH_PACKAGE_PREFIX = '@local/jiezi-nsh';
+const NSH_PACKAGE_PREFIX = 'jiezi-nsh';
 
 /**
  * The NSH CLI installed as the plugin's optional platform dependency. A
