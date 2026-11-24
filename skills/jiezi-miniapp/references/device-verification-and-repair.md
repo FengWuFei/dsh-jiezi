@@ -116,10 +116,17 @@ another build's earlier error to the current instance.
 | `host-component` | Check actual Host/wire support; use a supported fallback or stop for a Host release |
 | `HOST_ALERT_BLOCKING` | Host layer, not app source: update the Host or dismiss the alert; do not redeploy the unchanged mini-app |
 | `refused` | Inspect capability/signature/permission denial; reduce or correctly declare use |
+| `JZ_BUILD_CONFLICT` | Same app+build is installed with different bytes: raise the build number, rebuild, redeploy; never retry unchanged |
+| `JZ_UNTRUSTED`, `JZ_DEVELOPMENT_IMPORT` | Trust/route refusal: report bridge/Host trust state; deliver development-signed releases only through the paired deploy route; no bypass |
 | `automation_disabled` | Stop; only the user can explicitly restore automation |
 | `host_binding_required` | List targets and supply the exact `hostDeviceId`; never guess |
 | stale/ambiguous UI | Re-observe and improve stable selectors/observable state |
 | timeout | Check operation/readiness evidence; do not relabel it failure or success |
+
+Build-side `JZ_*` codes (`JZ_BAD_MANIFEST`, `JZ_MISSING_PURPOSE`,
+`JZ_BAD_DESCRIPTION`, `JZ_BAD_ICON`, …) are source defects: fix them per
+[presentation-and-package.md](presentation-and-package.md) and rebuild. A
+refusal is never a warning.
 
 After a source fix, run the entire loop again with the new release. Never retry
 an unchanged refused artifact, silently change the device, or combine evidence

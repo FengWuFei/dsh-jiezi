@@ -18,8 +18,8 @@ skill，以及一个侧栏面板。预设是**官方标准 Agent 能力 + 芥子
 
 ```text
 miniapp_doctor → 桥接身份 / nsh / 宿主版本 / 配对 / 自动化一次检查
-miniapp_init   → 新的 TSX 项目 + 计数器测试 + 已放入的 jiezi/native 适配层（只写空目录）
-miniapp_build  → releaseId + sha256（或指向源码行的结构化编译错误）
+miniapp_init   → 新的 TSX 项目 + 计数器测试 + jiezi/native 适配层 + jiezi.json/docs/about.md 表现层文件
+miniapp_build  → 签名 .jz 容器（releaseId + 容器/清单/载荷 sha256，或指向源码行的结构化 JZ_* 错误）
 miniapp_deploy → opId（pending；重复 release 会去重，force/reload 会新建）
 miniapp_reload → 同一 release 的新安装/启动操作（卡住实例或宿主弹窗时用）
 设备           → downloading / verifying / installing / launching
@@ -27,6 +27,12 @@ miniapp_reload → 同一 release 的新安装/启动操作（卡住实例或宿
 设备           → running | failed（带 evidenceId）
 Agent          → miniapp_diagnostics → 改源码 → 再次 miniapp_build
 ```
+
+每个 release 都是单个签名 `.jz`：可执行载荷仍是签名的 `.nshpkg`，外层再包一层独立签名的清单，
+记录应用库展示所需的图标、摘要、`docs/about.md` 受限 Markdown 说明和能力用途。`jiezi.json` 与
+`docs/about.md` 是项目源码，由 `miniapp_init` 生成；构建会校验摘要长度、Markdown 子集、可选图标的
+1024×1024/sRGB 规则与敏感能力用途，并以稳定的 `JZ_*` 码报告失败。对没有 `jiezi.json` 的旧项目，
+构建只在缺失时补齐最小表现层文件并报告 `presentationCreated`/`synthesizedPurposes`。
 
 `miniapp_init` 用 Host 提供的会话工作目录作为调用根，具体位置由 `jiezi-tools` 行的
 `projectLayout` 决定：默认 `working-directory` 直接把工作目录当成项目根（必须是空目录）；

@@ -9,12 +9,13 @@ import { installIdentity } from '../src/identity.js';
 
 const CLI = resolve(fileURLToPath(new URL('.', import.meta.url)), '../src/cli.js');
 const NSH = process.env.NSH_TOOLCHAIN ?? '';
+const MANIFEST = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 test('bridge identity is stable across two reads and names the package root', () => {
   const first = installIdentity();
   const second = installIdentity();
   assert.equal(first, second);
-  assert.equal(first.version, '0.3.4');
+  assert.equal(first.version, MANIFEST.version);
   assert.match(first.packageHash, /^[0-9a-f]{24}$/);
   assert.match(first.packageRoot, /(?:companion|vendor)\/bridge$/);
   assert.ok(first.newestMtimeMs > 0);

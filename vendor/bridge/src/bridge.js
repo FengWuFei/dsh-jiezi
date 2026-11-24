@@ -11,6 +11,8 @@ import { hostname, networkInterfaces } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { buildProject, nshVersion, resolveNsh } from './build.js';
 import { initializeProject } from './project-init.js';
+import { JZ_MIME, JZ_EXTENSION } from './jz.js';
+import { readPackage } from './jz-package.js';
 import { installIdentity } from './identity.js';
 import { VERSION } from './version.js';
 import { createWsServer } from './ws.js';
@@ -193,7 +195,7 @@ export class Bridge {
       nshVersion: this.nsh?.version ?? null,
       requireSigned: this.config.requireSigned,
       devices: this.store.listDevices().length,
-      capabilities: ['project-init', 'deploy', 'evidence', 'capture', 'pairing-session', 'automation'],
+      capabilities: ['project-init', 'package-v1', 'deploy', 'evidence', 'capture', 'pairing-session', 'automation'],
     };
   }
 
@@ -404,6 +406,13 @@ export class Bridge {
       signed: result.signed,
       minRuntime: result.minRuntime ?? null,
       artifactPath: result.artifactPath,
+      packagePath: result.packagePath ?? null,
+      packageSha256: result.packageSha256 ?? null,
+      manifestSha256: result.manifestSha256 ?? null,
+      payloadSha256: result.payloadSha256 ?? null,
+      payloadByteSize: result.payloadByteSize ?? null,
+      summary: result.summary ?? null,
+      capabilities: result.capabilities ?? null,
       createdAt: new Date().toISOString(),
     });
     this.emit({ type: 'build', projectId, releaseId: result.releaseId, ok: true, build: result.build });
@@ -731,6 +740,26 @@ export class Bridge {
     if (!release.signed) {
       throw new ProtocolError('refused', 'release is unsigned; signed artifacts are required for delivery');
     }
+    // The artifact directory is shared state: re-verify the package before a
+    // deploy hands it to a device. A development root can sign a paired
+    // deploy; the device keeps that provenance visible.
+    if (release.packagePath) {
+      try {
+        const verified = readPackage(readFileSync(release.packagePath), {
+          roots: this.productionRoots(),
+          developmentRoots: this.developmentRoots(),
+          route: 'paired-developer',
+          revocations: this.revocations(),
+        });
+        assertReleaseMatchesRecord(release, verified);
+      } catch (error) {
+        throw new ProtocolError(
+          error.code ?? 'refused',
+          `packaged artifact refused: ${error.message}`,
+          false,
+        );
+      }
+    }
 
     const force = body.force === true;
     // A forced deploy must not collapse into the existing (release, device)
@@ -800,11 +829,31 @@ export class Bridge {
     }
   }
 
+  /**
+   * The `.jz` file a device may download for `releaseId`, or null. The release
+   * record is the authority: a file that no record declares (or whose record
+   * does not name a `.jz`) is not served, so a leftover or swapped file in the
+   * shared artifact directory cannot be handed to a device.
+   */
+  packagePath(releaseId) {
+    const release = this.releaseRecord(releaseId);
+    if (!release || typeof release.packagePath !== 'string' || release.packagePath.length === 0) {
+      return null;
+    }
+    const path = join(this.store.paths.artifacts, `${releaseId}${JZ_EXTENSION}`);
+    // The record must name exactly the file this route would serve: a record
+    // pointing somewhere else must not make an unrelated file downloadable.
+    if (resolve(release.packagePath) !== resolve(path)) return null;
+    if (!existsSync(path)) return null;
+    return path;
+  }
+
   sendDeploy(deviceId, op) {
     const device = this.devices.get(deviceId);
     if (!device) return false;
     const release = this.releaseRecord(op.releaseId) ?? {};
     const artifactUrl = `${this.config.publicUrlBase ?? this.advertisedBaseUrl()}/artifacts/${encodeURIComponent(op.releaseId)}`;
+    const packageUrl = `${this.config.publicUrlBase ?? this.advertisedBaseUrl()}/packages/${encodeURIComponent(op.releaseId)}`;
     const sent = device.connection.send(envelope('deploy', {
       opId: op.opId,
       projectId: op.projectId,
@@ -814,6 +863,14 @@ export class Bridge {
       url: artifactUrl,
       sha256: release.sha256 ?? null,
       minRuntime: release.minRuntime ?? this.config.minRuntime ?? null,
+      format: release.format ?? null,
+      formatVersion: release.formatVersion ?? null,
+      packageUrl: release.packagePath ? packageUrl : null,
+      packageSha256: release.packageSha256 ?? null,
+      manifestSha256: release.manifestSha256 ?? null,
+      payloadSha256: release.payloadSha256 ?? null,
+      packageByteSize: release.packageByteSize ?? null,
+      summary: release.summary ?? null,
       notes: 'JieZi P0 delivery',
     }));
     if (sent) {
@@ -978,6 +1035,37 @@ export class Bridge {
       if (bytes.length !== 32) return null;
       const id = sha256(bytes).slice(0, 16);
       return { key, id };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Production roots (the packaged trust roots) for `.jz` validation. */
+  productionRoots() {
+    const roots = [];
+    for (const path of this.config.trustRootPaths ?? []) {
+      try {
+        const key = readFileSync(path, 'utf8').trim();
+        if (Buffer.from(key, 'base64').length === 32) roots.push(key);
+      } catch {
+        // A missing root is not fatal here; the verifier refuses untrusted
+        // packages with an explicit code.
+      }
+    }
+    return roots;
+  }
+
+  /** The development root, usable only on the paired developer route. */
+  developmentRoots() {
+    const root = this.rootPublicKey();
+    return root ? [root.key] : [];
+  }
+
+  /** Signed NSH revocation list, when the bridge is configured with one. */
+  revocations() {
+    if (!this.config.revocationsPath) return null;
+    try {
+      return readFileSync(this.config.revocationsPath, 'utf8');
     } catch {
       return null;
     }
@@ -1151,7 +1239,8 @@ export class Bridge {
   async handleDeviceHttp(req, res) {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const match = url.pathname.match(/^\/artifacts\/([^/]+)$/);
-    if (req.method !== 'GET' || !match) {
+    const packageMatch = url.pathname.match(/^\/packages\/([^/]+)$/);
+    if (req.method !== 'GET' || (!match && !packageMatch)) {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: false, error: { code: 'not_found' } }));
       return;
@@ -1162,23 +1251,28 @@ export class Bridge {
       res.end(JSON.stringify({ ok: false, error: { code: 'not_paired' } }));
       return;
     }
-    const releaseId = decodeURIComponent(match[1]);
+    const releaseId = decodeURIComponent((match ?? packageMatch)[1]);
     if (!/^rel_[0-9a-f]{16}(?:_[0-9]+)?$/.test(releaseId)) {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: false, error: { code: 'unknown_release' } }));
       return;
     }
-    const path = join(this.store.paths.artifacts, `${releaseId}.nshpkg`);
-    if (!existsSync(path)) {
+    const isPackage = packageMatch !== null;
+    const path = isPackage
+      ? this.packagePath(releaseId)
+      : join(this.store.paths.artifacts, `${releaseId}.nshpkg`);
+    if (path === null || !existsSync(path)) {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: false, error: { code: 'unknown_release' } }));
       return;
     }
-    res.writeHead(200, {
-      'content-type': 'application/octet-stream',
+    const headers = {
+      'content-type': isPackage ? JZ_MIME : 'application/octet-stream',
       'content-length': statSync(path).size,
       'x-jiezi-release': releaseId,
-    });
+    };
+    if (isPackage) headers['x-jiezi-format'] = 'jiezi.miniapp;v=1';
+    res.writeHead(200, headers);
     createReadStream(path).pipe(res);
   }
 
@@ -1516,6 +1610,29 @@ function sanitizeError(error) {
     code: String(error.code ?? 'unknown').slice(0, 100),
     message: String(error.message ?? '').slice(0, 2000),
   };
+}
+
+/**
+ * Compares a re-verified `.jz` with the release record it was built from
+ * (034 plan A.9). The record is the bridge's promise to a device; a file in
+ * the shared artifact directory may have been swapped or left over, so the
+ * identity, the payload digest and the package digest must all still agree.
+ */
+export function assertReleaseMatchesRecord(release, verified) {
+  const fields = [
+    ['appId', release.appId, verified.manifest.app.id],
+    ['name', release.name, verified.manifest.app.name],
+    ['version', release.version, verified.manifest.app.version],
+    ['build', release.build, verified.manifest.app.build],
+    ['payloadSha256', release.payloadSha256, verified.payloadSha256],
+    ['packageSha256', release.packageSha256, verified.packageSha256],
+    ['manifestSha256', release.manifestSha256, verified.manifestSha256],
+  ];
+  for (const [field, recorded, actual] of fields) {
+    if (recorded === undefined || recorded === null || recorded !== actual) {
+      throw new ProtocolError('refused', `the packaged artifact ${field} no longer matches the release record`);
+    }
+  }
 }
 
 function requireId(value, name) {

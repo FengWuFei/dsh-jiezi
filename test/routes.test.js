@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { apply, buildRoutes } from '../lib/host/index.js';
 import { API_ROUTES } from '../lib/shared/protocol.js';
@@ -7,6 +8,7 @@ import { startFakeBridge } from './support/fake-bridge.js';
 
 const EXPIRES = '2026-11-21T12:00:00.000Z';
 const FINGERPRINT = 'f'.repeat(64);
+const VENDORED_BRIDGE_VERSION = JSON.parse(readFileSync(new URL('../vendor/bridge/package.json', import.meta.url), 'utf8')).version;
 
 function handlers() {
   return {
@@ -153,7 +155,7 @@ test('host routes pair, summarize, deploy, diagnose, and automate', { timeout: 2
     assert.equal(statusBody.bridge.version, '0.2.0');
     assert.equal(typeof statusBody.bridge.socketPath, 'string');
     assert.equal(statusBody.bridge.nsh, null);
-    assert.equal(statusBody.bridge.expectedVersion, '0.3.4');
+    assert.equal(statusBody.bridge.expectedVersion, VENDORED_BRIDGE_VERSION);
     assert.equal(statusBody.setup.initialized, false);
     assert.equal(statusBody.setup.bridgeCliAvailable, true);
     assert.equal(statusBody.devices.length, 1);

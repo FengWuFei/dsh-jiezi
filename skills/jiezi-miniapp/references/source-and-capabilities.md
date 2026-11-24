@@ -12,6 +12,9 @@ Inspect at least:
 
 ```text
 nsh.json             app id, name, version/build, entry/theme/capabilities
+jiezi.json           library summary and capability purpose text
+docs/about.md        关于 description (restricted Markdown)
+assets/icon.png      optional 1024×1024 sRGB icon
 App.tsx              default entry unless nsh.json says otherwise
 tsconfig.json        project TypeScript/JSX configuration
 .nsh/types/          generated Native Shell and installed-set declarations
@@ -88,6 +91,14 @@ The JieZi build and device loop remain required for delivery claims.
 `nsh.json` is the app identity and capability boundary. Declare only what the
 implementation uses. Declaration does not prove a runtime permission was
 granted, and refusal is not a reason to search for a bypass.
+
+Capability values keep Native Shell shapes: booleans (`"clipboard": true`),
+objects (`"openUrl": { "schemes": [...] }`), arrays (`"host": [...]`), or
+`"host": true`. Every declared sensitive capability (`clipboard`, `picker`,
+`share`, `speech`, `notifications`) also needs purpose text in `jiezi.json`; the
+signed outer manifest carries the declaration and purposes for display only.
+Read [presentation-and-package.md](presentation-and-package.md) before authoring
+or changing those files.
 
 Use Native Shell storage APIs already available in the project for ordinary
 data. Use `host.call` only for an exact contract exposed by the installed Host

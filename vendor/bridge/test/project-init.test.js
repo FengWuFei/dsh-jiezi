@@ -15,6 +15,9 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { BASIC_TEMPLATE, certificateCovers, initializeProject, projectInitRequest } from '../src/project-init.js';
 import { initDestination, resolveCallRoot, resolveProjectLayout } from '../src/bridge.js';
+import { JZ_SENSITIVE_CAPABILITIES } from '../src/jz.js';
+import { validatePurposes, validateSummary } from '../src/jz-manifest.js';
+import { validateDescription } from '../src/jz-media.js';
 
 function scaffold(command, args, calls = []) {
   calls.push({ command, args });
@@ -64,6 +67,12 @@ test('initializes the fixed TSX scaffold, JieZi template, metadata and adapter',
   assert.match(readFileSync(join(dir, 'App.test.tsx'), 'utf8'), /press\("Increment"\)/);
   assert.match(readFileSync(join(dir, 'README.md'), 'utf8'), /# Todo List/);
   assert.equal(existsSync(join(dir, 'node_modules', 'jiezi', 'native', 'runtime.js')), true);
+  // `.jz` needs presentation metadata in the source project.
+  const presentation = JSON.parse(readFileSync(join(dir, 'jiezi.json'), 'utf8'));
+  assert.equal(presentation.schemaVersion, 1);
+  assert.equal(presentation.summary, 'Todo List mini app.');
+  assert.match(readFileSync(join(dir, 'docs', 'about.md'), 'utf8'), /# Todo List/);
+  assert.ok(result.files.includes('jiezi.json'));
   assert.equal(readdirSync(projectRoot).some((name) => name.includes('.init-')), false);
 });
 
@@ -222,4 +231,55 @@ test('scaffolds the exact destination when the caller passes one', async (t) => 
     runCommand: (command, args) => scaffold(command, args, []),
   }), { code: 'project_exists', message: /named-subdirectory/ });
   assert.equal(readFileSync(join(other, 'keep.txt'), 'utf8'), 'user work');
+});
+
+
+test('a Markdown-active name is neutralized so the scaffold passes the .jz validators', async (t) => {
+  const projectRoot = fixture(t);
+  const name = 'A <b> B `code` [x][y] foo:bar user@example.com';
+  const result = await initializeProject(options(projectRoot, { projectId: 'hostile-name', name }, (command, args) => scaffold(command, args, [])));
+  const about = readFileSync(join(result.projectDir, 'docs', 'about.md'), 'utf8');
+  const presentation = JSON.parse(readFileSync(join(result.projectDir, 'jiezi.json'), 'utf8'));
+  // The generated files are exactly what miniapp_build and the iOS reader run.
+  assert.doesNotThrow(() => validateDescription(Buffer.from(about, 'utf8')));
+  assert.doesNotThrow(() => validateSummary(presentation.summary));
+  assert.match(about, /# A/);
+  for (const active of ['<b>', '`', '[x][y]', 'foo:bar', 'user@example.com']) {
+    assert.equal(about.includes(active), false, `about.md still contains ${active}`);
+  }
+});
+
+test('a lone surrogate name is rejected before any file is created', async (t) => {
+  const projectRoot = fixture(t);
+  await assert.rejects(
+    initializeProject(options(projectRoot, { projectId: 'surrogate', name: 'Demo\ud800' }, (command, args) => scaffold(command, args, []))),
+    { code: 'invalid_request' },
+  );
+  assert.deepEqual(readdirSync(projectRoot), []);
+});
+
+test('a scaffolded sensitive declaration gets a valid synthesized purpose', async (t) => {
+  const projectRoot = fixture(t);
+  const withCapabilities = async (command, args) => {
+    const dir = args.at(-1);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'App.tsx'), '// official scaffold\n');
+    writeFileSync(join(dir, 'tsconfig.json'), '{"extends":"./.nsh/tsconfig.json"}\n');
+    writeFileSync(join(dir, 'nsh.json'), JSON.stringify({
+      name: 'staging', id: 'com.example.staging', version: '0.0.1', build: 0,
+      capabilities: { clipboard: true, camera: true },
+    }));
+    return Promise.resolve({ code: 0, stdout: 'created', stderr: '' });
+  };
+  const result = await initializeProject(options(projectRoot, { projectId: 'purpose-app' }, withCapabilities));
+  const presentation = JSON.parse(readFileSync(join(result.projectDir, 'jiezi.json'), 'utf8'));
+  const metadata = JSON.parse(readFileSync(join(result.projectDir, 'nsh.json'), 'utf8'));
+  // `camera` is not an NSH 0.6.0 sensitive id; only `clipboard` needs text.
+  assert.deepEqual(Object.keys(presentation.capabilityPurposes), ['clipboard']);
+  assert.deepEqual(JZ_SENSITIVE_CAPABILITIES.includes('clipboard'), true);
+  assert.doesNotThrow(() => validatePurposes(
+    presentation.capabilityPurposes,
+    metadata.capabilities,
+    JZ_SENSITIVE_CAPABILITIES,
+  ));
 });

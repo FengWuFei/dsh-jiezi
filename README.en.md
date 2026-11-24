@@ -129,6 +129,9 @@ miniapp_diagnostics ← miniapp_action(expect) ← miniapp_ui
 When the environment is uncertain, ask the Agent to run `miniapp_doctor` first. For a stuck instance or blocking Host alert, use `miniapp_reload` rather than deploying the same Release again.
 
 > [!NOTE]
+> Every Release is one signed `.jz` container: besides the executable payload it carries the app-library icon, summary, `docs/about.md` description, and capability purposes. Those are project source (`miniapp_init` creates them) and can be edited directly; the build reports oversized summaries, HTML in the description, wrong icon size/color space, or missing sensitive-capability purposes with stable `JZ_*` codes.
+
+> [!NOTE]
 > By default, `miniapp_init` uses the **Session working directory itself** as the project root, and that directory must be empty. To keep multiple mini-apps in one directory, set `projectLayout` to `named-subdirectory` on `jiezi-tools`; projects will be created at `<working directory>/<projectId>`.
 
 > [!TIP]
@@ -138,8 +141,8 @@ When the environment is uncertain, ask the Agent to run `miniapp_doctor` first. 
 
 | Area | Tool | Purpose |
 | --- | --- | --- |
-| Project | `miniapp_init` | Initialize a Native Shell project in an empty directory and preflight development-certificate coverage for the `appId` |
-| Build | `miniapp_build` | Build and sign an immutable Release with SHA-256, or return structured compile errors |
+| Project | `miniapp_init` | Initialize a Native Shell project in an empty directory (including the `jiezi.json` and `docs/about.md` presentation files) and preflight development-certificate coverage for the `appId` |
+| Build | `miniapp_build` | Build the signed payload and pack it into one signed `.jz` container (icon, summary, restricted-Markdown description, capability purposes); returns an immutable Release with SHA-256 or structured compile errors with stable `JZ_*` codes |
 | Delivery | `miniapp_deploy` | Install a signed Release on a paired device; use `force: true` to reinstall |
 | Delivery | `miniapp_reload` | Reinstall and launch the current Release as a new operation to recover a stuck instance or handle a Host alert |
 | Delivery | `miniapp_status` | Inspect installation, runtime, Host version, and bridge state; optionally wait for a terminal operation state |

@@ -4,7 +4,7 @@
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Bridge } from './bridge.js';
 import { buildProject, ensureDevKey, resolveNsh, nshVersion } from './build.js';
@@ -40,7 +40,25 @@ function stateDirOf(args) {
   return resolve(String(args['state-dir'] ?? process.env.JIEZI_HOME ?? DEFAULT_STATE));
 }
 
-function configFor(args, store) {
+/** Trust-root paths from `--trust-root` (path-list separated) or the config. */
+function trustRootPathsFor(args, existing) {
+  const value = args['trust-root'];
+  if (value === undefined) return existing.trustRootPaths ?? [];
+  if (typeof value !== 'string') throw new Error('--trust-root needs a file path');
+  return value
+    .split(delimiter)
+    .map((path) => path.trim())
+    .filter((path) => path.length > 0)
+    .map((path) => resolve(path));
+}
+
+/**
+ * Production trust configuration for `.jz` verification. `trustRootPaths` and
+ * `revocationsPath` are consumed by `Bridge.productionRoots()` and
+ * `Bridge.revocations()`; before this they were read but nothing ever set
+ * them (034 plan A.12).
+ */
+export function configFor(args, store) {
   const existing = store.loadConfig() ?? {};
   const projectRoot = resolve(String(args['project-root'] ?? existing.projectRoot ?? join(store.root, 'projects')));
   const socketPath = resolve(String(args.socket ?? existing.socketPath ?? store.paths.socket));
@@ -64,6 +82,12 @@ function configFor(args, store) {
     tlsKey: args['tls-key'] ?? existing.tlsKey ?? null,
     tlsFingerprint: existing.tlsFingerprint ?? null,
     shareRootPublicKey: existing.shareRootPublicKey ?? true,
+    trustRootPaths: trustRootPathsFor(args, existing),
+    revocationsPath: args.revocations === undefined
+      ? existing.revocationsPath ?? null
+      : typeof args.revocations !== 'string' || args.revocations.length === 0
+        ? null
+        : resolve(String(args.revocations)),
   };
 }
 

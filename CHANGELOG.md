@@ -3,6 +3,23 @@
 本文件记录每个公开发布版本的变更；格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.1.2] - 2026-11-24
+
+### 新增
+
+- 交付格式升级为 `.jz` 签名容器：每个 Release 在签名的 `.nshpkg` 载荷外再带一层独立签名清单，
+  包含应用库图标、摘要、受限 Markdown 说明与能力用途；随包 `jiezi-bridge` 同步到 0.4.0。
+- `miniapp_init` 生成 `jiezi.json`（摘要与 `capabilityPurposes`）和 `docs/about.md`；`miniapp_build`
+  校验摘要长度、说明的 Markdown 子集、可选图标（1024×1024 sRGB RGB/RGBA PNG）和敏感能力
+  （`clipboard`/`picker`/`share`/`speech`/`notifications`）的用途文本，并以稳定 `JZ_*` 码返回
+  表现层失败；旧项目只在缺少 `jiezi.json` 时由构建补齐最小文件并报告
+  `presentationCreated`/`synthesizedPurposes`。
+- Skill 新增 `references/presentation-and-package.md`，并在 `SKILL.md`、常驻提示词与设备修复参考中
+  说明表现层文件、能力用途、`.jz` 构建字段与安装拒绝码（`JZ_BUILD_CONFLICT`、`JZ_UNTRUSTED` 等）；
+  `miniapp_build` 工具描述补充 `.jz` 产物与摘要字段。
+
+[1.1.2]: https://github.com/FengWuFei/dsh-jiezi/releases/tag/v1.1.2
+
 ## [1.1.1] - 2026-11-23
 
 ### 变更

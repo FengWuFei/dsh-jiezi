@@ -2,12 +2,17 @@
 // this module is only executed inside the bridge process.
 
 import { createHash } from 'node:crypto';
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
 import { basename, delimiter, isAbsolute, join, relative, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseBuildErrors, ProtocolError } from './protocol.js';
+import { packPackage } from './jz-package.js';
+import { JZ_SENSITIVE_CAPABILITIES } from './jz.js';
+import { declaredCapabilityIDs } from './jz-manifest.js';
+import { neutralizedMarkdownText } from './jz-media.js';
+import { writeJsonAtomic } from './store.js';
 
 const IGNORED_DIRS = new Set(['.git', '.build', '.nsh', 'node_modules']);
 const MAX_CAPTURE = 64 * 1024;
@@ -175,6 +180,62 @@ function walk(root, dir, files) {
   }
 }
 
+/**
+ * The neutral purpose the producer synthesizes for a *pre-`.jz`* project (one
+ * with no `jiezi.json` at all) that already declares a sensitive capability.
+ * An authored `jiezi.json` that omits a required purpose stays a build error.
+ */
+export function synthesizedPurposeFor(id) {
+  return `使用「${id}」能力以提供应用功能。`;
+}
+
+/**
+ * Existing projects predate `.jz` and may not have presentation metadata.
+ * Create the smallest valid `jiezi.json` and `docs/about.md` when they are
+ * absent; never overwrite a file the author already wrote. When the migration
+ * creates `jiezi.json`, it also synthesizes the neutral purpose text a
+ * declared sensitive capability needs, and reports those ids so the build
+ * result says what was added (034 plan D1).
+ * @returns {{created: string[], synthesizedPurposes: string[]}}
+ */
+export function ensurePresentationMetadata(projectDir, metadata, projectId) {
+  const created = [];
+  const name = String(metadata.name ?? projectId).trim() || projectId;
+  const summary = [...name].slice(0, 120).join('');
+  const jieziPath = join(projectDir, 'jiezi.json');
+  const synthesizedPurposes = [];
+  if (!existsSync(jieziPath)) {
+    const declared = declaredCapabilityIDs(metadata.capabilities ?? {});
+    const capabilityPurposes = {};
+    for (const id of JZ_SENSITIVE_CAPABILITIES) {
+      if (!declared.has(id)) continue;
+      capabilityPurposes[id] = synthesizedPurposeFor(id);
+      synthesizedPurposes.push(id);
+    }
+    writeFileSync(jieziPath, `${JSON.stringify({
+      schemaVersion: 1,
+      summary,
+      capabilityPurposes,
+    }, null, 2)}\n`);
+    created.push('jiezi.json');
+  }
+  const docsDir = join(projectDir, 'docs');
+  const aboutPath = join(docsDir, 'about.md');
+  if (!existsSync(aboutPath)) {
+    mkdirSync(docsDir, { recursive: true });
+    const appId = neutralizedMarkdownText(String(metadata.id ?? projectId));
+    const title = neutralizedMarkdownText(name);
+    writeFileSync(aboutPath, [
+      `# ${title}`,
+      '',
+      `${title}（${appId}）`,
+      '',
+    ].join('\n'));
+    created.push('docs/about.md');
+  }
+  return { created, synthesizedPurposes };
+}
+
 export function readProjectMetadata(projectDir) {
   const nshJson = join(projectDir, 'nsh.json');
   if (!existsSync(nshJson)) return {};
@@ -216,6 +277,9 @@ export async function buildProject({ projectDir, projectId, nshPath, keyDir, art
 
   const result = await run(nshPath, args, { timeoutMs: 180_000 });
   if (result.code !== 0) {
+    // No artifact is usable and no release metadata will be written, so a
+    // partial temp file or unsigned output directory must not survive.
+    removeReleaseArtifacts({ artifactPath: tmpArtifact, packagePath: unsignedDir });
     const canonicalProjectDir = realpathSync(projectDir);
     const errors = parseBuildErrors(`${result.stderr}\n${result.stdout}`, metadata.entry ?? 'App.tsx')
       .map((error) => ({
@@ -257,6 +321,7 @@ export async function buildProject({ projectDir, projectId, nshPath, keyDir, art
   const stdouts = result.stdout;
   const keyMatch = stdouts.match(/signed by ([0-9a-f]+)/);
   const runtimeMatch = stdouts.match(/for runtime ([^ ]+) or newer/);
+  const resolvedRuntime = runtimeMatch?.[1] ?? minRuntime ?? null;
   const record = {
     releaseId,
     projectId,
@@ -265,15 +330,111 @@ export async function buildProject({ projectDir, projectId, nshPath, keyDir, art
     keyId: keyMatch?.[1] ?? key.keyId,
     sha256,
     artifactPath,
-    minRuntime: runtimeMatch?.[1] ?? minRuntime ?? null,
+    minRuntime: resolvedRuntime,
     name: metadata.name ?? projectId,
     appId: metadata.id ?? null,
     createdAt: new Date().toISOString(),
     nsh: nshPath,
     sourceHash: hash,
   };
-  writeFileSync(`${artifactPath}.json`, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+  const recordPath = `${artifactPath}.json`;
+  let packagePath = null;
+
+  // `.jz` is the delivery format: one signed container with presentation
+  // metadata. A project without `jiezi.json`/`docs/about.md` cannot produce
+  // one, so the build reports that as a structured compile-stage failure
+  // instead of silently falling back to an `.nshpkg`-only release. A failed
+  // package leaves neither the intermediate payload nor a release record, so
+  // a later deploy cannot hand out an artifact this build refused.
+  if (keyDir) {
+    try {
+      const presentation = ensurePresentationMetadata(projectDir, metadata, projectId);
+      const packaged = packPackage({
+        projectDir,
+        payloadPath: artifactPath,
+        releaseId,
+        buildNumber,
+        minRuntime: resolvedRuntime ?? '0.6.0',
+        keyDir,
+        artifactDir,
+      });
+      packagePath = packaged.packagePath;
+      Object.assign(record, {
+        format: packaged.format,
+        formatVersion: packaged.formatVersion,
+        packagePath: packaged.packagePath,
+        packageSha256: packaged.packageSha256,
+        packageByteSize: packaged.packageByteSize,
+        manifestSha256: packaged.manifestSha256,
+        payloadSha256: packaged.payloadSha256,
+        payloadByteSize: packaged.payloadByteSize,
+        summary: packaged.summary,
+        iconSha256: packaged.iconSha256,
+        descriptionSha256: packaged.descriptionSha256,
+        capabilities: packaged.capabilities,
+        purposes: packaged.purposes,
+        version: packaged.version,
+        rootKeyId: packaged.rootKeyId,
+        presentationCreated: presentation.created,
+        synthesizedPurposes: presentation.synthesizedPurposes,
+      });
+    } catch (error) {
+      removeReleaseArtifacts({ artifactPath, packagePath, recordPath });
+      return {
+        ok: false,
+        releaseId: null,
+        build: buildNumber,
+        stage: 'compile',
+        signed: true,
+        signedRequested: true,
+        errors: [{
+          file: 'jiezi.json',
+          line: 0,
+          column: 0,
+          message: `${error.code ?? 'JZ_PACKAGE'}: ${error.message}`,
+        }],
+        rawTail: `${error.code ?? ''}: ${error.message}`,
+      };
+    }
+  }
+
+  try {
+    writeJsonAtomic(recordPath, record);
+  } catch (error) {
+    removeReleaseArtifacts({ artifactPath, packagePath, recordPath });
+    return {
+      ok: false,
+      releaseId: null,
+      build: buildNumber,
+      stage: 'package',
+      signed: true,
+      signedRequested: true,
+      errors: [{
+        file: recordPath,
+        line: 0,
+        column: 0,
+        message: `cannot write the release record: ${error.message}`,
+      }],
+      rawTail: error.message,
+    };
+  }
   return { ok: true, ...record };
+}
+
+/** Deletes the artifacts and release record of a refused build (best effort). */
+export function removeReleaseArtifacts({ artifactPath, packagePath, recordPath } = {}) {
+  const paths = [artifactPath, packagePath, recordPath];
+  if (typeof artifactPath === 'string' && artifactPath.length > 0) {
+    paths.push(`${artifactPath}.unsigned`);
+  }
+  for (const path of paths) {
+    if (typeof path !== 'string' || path.length === 0) continue;
+    try {
+      rmSync(path, { recursive: true, force: true });
+    } catch {
+      // Cleanup is best effort; the build failure is what the caller reports.
+    }
+  }
 }
 
 export function run(command, args, { timeoutMs = 60_000, cwd } = {}) {

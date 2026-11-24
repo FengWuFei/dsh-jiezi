@@ -256,7 +256,7 @@ export function apply(ctx: ToolsContext, config: unknown = {}): void {
   const tools: ToolDefinition[] = [
     tool({
       name: 'miniapp_init',
-      description: 'Initialize a new JieZi Native Shell TSX mini-app in the Session working directory (or in <working directory>/<projectId> when the profile sets projectLayout: named-subdirectory). Runs the pinned non-interactive TSX scaffold, adds a tested counter template with stable testIDs, and stages the bundled jiezi/native adapter. projectId is a lowercase slug; name and reverse-DNS appId are optional. Never overwrites a non-empty destination. Returns projectId, projectDir, and signing { certificate, signable } for subsequent editing and miniapp_build.',
+      description: 'Initialize a new JieZi Native Shell TSX mini-app in the Session working directory (or in <working directory>/<projectId> when the profile sets projectLayout: named-subdirectory). Runs the pinned non-interactive TSX scaffold, adds a tested counter template with stable testIDs, stages the bundled jiezi/native adapter, and scaffolds the `jiezi.json` summary/purpose file plus the `docs/about.md` description. projectId is a lowercase slug; name and reverse-DNS appId are optional. Never overwrites a non-empty destination. Returns projectId, projectDir, and signing { certificate, signable } for subsequent editing and miniapp_build.',
       parameters: {
         type: 'object',
         properties: {
@@ -273,7 +273,7 @@ export function apply(ctx: ToolsContext, config: unknown = {}): void {
     }),
     tool({
       name: 'miniapp_build',
-      description: 'Build a Native Shell mini-app project on the DSH computer. Returns a release id, build number, artifact path, and SHA-256, or structured compile errors pointing at source lines.',
+      description: 'Build a Native Shell mini-app project on the DSH computer and pack it into one signed `.jz` container: the signed `.nshpkg` payload plus icon, summary, restricted-Markdown description and declared-capability purposes. Returns a release id, build number, artifact/package paths, container/manifest/payload SHA-256 digests, summary and purposes, or structured compile errors (including stable `JZ_*` presentation codes) pointing at source lines.',
       parameters: {
         type: 'object',
         properties: {
@@ -712,6 +712,7 @@ function promptSection(): string {
     '### Project and component rules',
     '- Work on Native Shell TSX in the Session working directory. If no project exists, call miniapp_init once with a lowercase projectId; it initializes the working directory itself by default (or <working directory>/<projectId> with projectLayout: named-subdirectory), so use its returned projectDir. It creates the official TSX scaffold, a tested counter template, and the staged native adapter. Never initialize over or overwrite existing work.',
     '- miniapp_init reports signing.signable for the development certificate. When it is false, tell the user that appId before any build instead of discovering the refusal at signing; the default com.jiezi.miniapp.<slug> id is signable.',
+    '- Every release is packed and signed as a `.jz` container: `jiezi.json` (summary plus per-capability purpose text) and `docs/about.md` (restricted Markdown) are project source, and `assets/icon.png` is optional (1024×1024 sRGB PNG). Keep docs/about.md inside the allowed subset (no HTML, images, bare URLs, e-mail addresses, or reference links) and give every declared sensitive capability (clipboard, picker, share, speech, notifications) a purpose. Read the skill\'s presentation-and-package reference before changing these files.',
     '- Use the read, glob, and grep tools for inspection. Reach for bash only for a command that genuinely needs a shell (nsh test/check, shasum, device tooling), never as a substitute for those three.',
     '- Do not add npm packages, another package manager, React Native/DOM code, native code, or app-side Rust/Cargo setup. The reviewed jiezi/native components are registered by current Hosts and need no per-app grant; a new native capability requires a Host release and explicit user approval.',
     '- Before choosing or using components, load the jiezi-miniapp skill and read components.md plus its bundled API snapshot. These resources work in an empty workspace and do not depend on a JieZi checkout. After initialization, reconcile project-version differences; use host.params.components for runtime Host availability. miniapp_ui capabilities are automation actions, not a component catalog.',
@@ -719,7 +720,7 @@ function promptSection(): string {
     '',
     '### Required implementation and verification loop',
     '- If the environment is uncertain (first call, nsh/Host version, no devices), call miniapp_doctor once. It returns ready, blockers, and nextActions. Use fix:true only for a stale nsh path or bridge restart. Do not guess a host target.',
-    '- For a new app: miniapp_init → edit → miniapp_build. For later changes: inspect/read evidence → edit → miniapp_build. A deployable build requires ok:true and a releaseId; failed builds have no deployable release.',
+    '- For a new app: miniapp_init → edit → miniapp_build. For later changes: inspect/read evidence → edit → miniapp_build. A deployable build requires ok:true and a releaseId; failed builds have no deployable release. Presentation/format refusals carry stable JZ_* codes: fix the named source file and rebuild (raise the build number on JZ_BUILD_CONFLICT); never bypass or retry an unchanged refused artifact.',
     '- Deploy the exact successful release with miniapp_deploy, then immediately call miniapp_status with { opId, wait: true }. Do not end the turn or poll rapidly. On timeout, read the same opId again rather than duplicating deployment.',
     '- A deploy result with deduplicated:true/reinstalled:false did not start a new install. Do not redeploy the same release hoping to change the screen; use miniapp_reload (or miniapp_deploy force:true) only when the instance is stuck or a Host alert blocks automation.',
     '- running proves only that the exact build launched without a startup-settle runtime error. It does not prove the requested interaction, persistence, or layout.',

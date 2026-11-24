@@ -19,7 +19,10 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEV_CERT_APPS, run } from './build.js';
+import { DEV_CERT_APPS, run, synthesizedPurposeFor } from './build.js';
+import { JZ_SENSITIVE_CAPABILITIES } from './jz.js';
+import { declaredCapabilityIDs, validatePurposes, validateSummary } from './jz-manifest.js';
+import { neutralizedMarkdownText, validateDescription } from './jz-media.js';
 import { ProtocolError } from './protocol.js';
 
 export const BASIC_TEMPLATE = 'jiezi-basic@1';
@@ -70,7 +73,9 @@ export function projectInitRequest(body) {
     throw new ProtocolError('invalid_request', 'name must be a string');
   }
   const name = value.name === undefined ? displayName(projectId) : value.name.trim();
-  if (name.length < 1 || name.length > 80 || /[\x00-\x1f\x7f]/.test(name)) {
+  // A lone UTF-16 surrogate is legal JSON but not a Unicode scalar value; it
+  // would be written into `jiezi.json` and refused by the iOS reader.
+  if (name.length < 1 || name.length > 80 || /[\x00-\x1f\x7f]/.test(name) || !name.isWellFormed()) {
     throw new ProtocolError('invalid_request', 'name must be 1–80 printable characters');
   }
   const derivedId = `com.jiezi.miniapp.${projectId.replaceAll('-', '')}`;
@@ -120,6 +125,51 @@ function writeMetadata(staging, request) {
     version: '1.0.0',
     build: 1,
   }, null, 2)}\n`);
+}
+
+/**
+ * Writes the JieZi presentation files the `.jz` container requires.
+ *
+ * The request name is user text; it is neutralized for Markdown before it
+ * reaches `docs/about.md` so a name such as `A <b> B` or ``A `b` B`` cannot
+ * create a project the media validators (or the iOS reader) refuse. The
+ * generated files
+ * are validated here so `miniapp_init` can never hand out a project that
+ * `miniapp_build` immediately rejects. A declared sensitive capability gets
+ * the same neutral synthesized purpose the legacy-project migration uses.
+ */
+function writePresentation(staging, request) {
+  const summary = `${request.name} mini app.`.slice(0, 120);
+  const title = neutralizedMarkdownText(request.name);
+  // appId is the strict reverse-DNS pattern checked above, so it is safe text
+  // on its own; the neutralized title cannot open HTML, a code span or a link.
+  const about = [
+    `# ${title}`,
+    '',
+    `${title} is a JieZi mini-app (${request.appId}).`,
+    '',
+  ].join('\n');
+  let capabilityPurposes = {};
+  try {
+    const metadata = JSON.parse(readFileSync(join(staging, 'nsh.json'), 'utf8'));
+    const declaration = metadata.capabilities ?? {};
+    const declared = declaredCapabilityIDs(declaration);
+    for (const id of JZ_SENSITIVE_CAPABILITIES) {
+      if (declared.has(id)) capabilityPurposes[id] = synthesizedPurposeFor(id);
+    }
+    validateSummary(summary);
+    validateDescription(Buffer.from(about, 'utf8'));
+    validatePurposes(capabilityPurposes, declaration, JZ_SENSITIVE_CAPABILITIES);
+  } catch (error) {
+    throw new ProtocolError('init_failed', `generated presentation files are invalid: ${error.message}`);
+  }
+  writeFileSync(join(staging, 'jiezi.json'), `${JSON.stringify({
+    schemaVersion: 1,
+    summary,
+    capabilityPurposes,
+  }, null, 2)}\n`);
+  mkdirSync(join(staging, 'docs'), { recursive: true });
+  writeFileSync(join(staging, 'docs', 'about.md'), `${about}\n`);
 }
 
 function applyTemplate(staging, request, templateDir, adapterDir) {
@@ -178,6 +228,7 @@ export async function initializeProject(options) {
     }
 
     writeMetadata(staging, request);
+    writePresentation(staging, request);
     const adapterVersion = applyTemplate(staging, request, templateDir, adapterDir);
 
     // Recheck immediately before commit. A concurrent non-empty project wins;
@@ -201,7 +252,7 @@ export async function initializeProject(options) {
       adapter: `jiezi/native@${adapterVersion}`,
       signing: { certificate: DEV_CERT_APPS, signable },
       warnings,
-      files: ['.gitignore', 'App.test.tsx', 'App.tsx', 'README.md', 'nsh.json', 'tsconfig.json'],
+      files: ['.gitignore', 'App.test.tsx', 'App.tsx', 'README.md', 'docs/about.md', 'jiezi.json', 'nsh.json', 'tsconfig.json'],
     };
   } finally {
     if (stagingExists) rmSync(staging, { recursive: true, force: true });

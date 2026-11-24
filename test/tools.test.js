@@ -237,6 +237,9 @@ test('JieZi guidance adds a non-exclusive section and preserves the standard pro
     assert.match(jiezi.text, /miniapp_init/);
     assert.match(jiezi.text, /components\.md/);
     assert.match(jiezi.text, /miniapp_status/);
+    assert.match(jiezi.text, /jiezi\.json/);
+    assert.match(jiezi.text, /docs\/about\.md/);
+    assert.match(jiezi.text, /JZ_\*/);
   } finally {
     for (const cleanup of cleanups.reverse()) {
       try { await cleanup?.(); } catch { /* teardown is best effort */ }

@@ -59,11 +59,11 @@ test('the package publishes the JieZi mini-app development skill', () => {
   assert.match(frontmatter[1], /^name: jiezi-miniapp$/m);
   assert.match(frontmatter[1], /^description: .+mini-app.+/m);
   assert.ok(skill.length < 8192, 'main skill stays below the preset tool-result pruning threshold');
-  for (const contract of ['nsh.json', '.nsh/types', 'testID', 'miniapp_build', 'miniapp_deploy', 'miniapp_reload', 'miniapp_status', 'miniapp_ui', 'miniapp_action', 'miniapp_diagnostics', 'miniapp_doctor']) {
+  for (const contract of ['nsh.json', '.nsh/types', 'testID', 'miniapp_build', 'miniapp_deploy', 'miniapp_reload', 'miniapp_status', 'miniapp_ui', 'miniapp_action', 'miniapp_diagnostics', 'miniapp_doctor', 'jiezi.json', 'docs/about.md', '.jz']) {
     assert.ok(skill.includes(contract), `skill covers ${contract}`);
   }
 
-  for (const name of ['components.md', 'source-and-capabilities.md', 'device-verification-and-repair.md']) {
+  for (const name of ['components.md', 'source-and-capabilities.md', 'device-verification-and-repair.md', 'presentation-and-package.md']) {
     const reference = readFileSync(join(ROOT, 'skills', 'jiezi-miniapp', 'references', name), 'utf8');
     assert.ok(reference.length < 8192, `${name} stays below the pruning threshold`);
     assert.ok(skill.includes(`references/${name}`), `skill links ${name}`);

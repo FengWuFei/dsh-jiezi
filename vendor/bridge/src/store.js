@@ -1,8 +1,8 @@
 // Durable bridge state. Everything is plain JSON with atomic replacement so a
 // crash leaves either the old file or the new one, never a partial row.
 
-import { chmodSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, closeSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 const MODE_DIR = 0o700;
 const MODE_FILE = 0o600;
@@ -18,8 +18,34 @@ export function ensureDir(path) {
 
 export function writeJsonAtomic(path, value, mode = MODE_FILE) {
   const temp = `${path}.tmp-${process.pid}-${Date.now()}`;
-  writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode });
-  renameSync(temp, path);
+  try {
+    const fd = openSync(temp, 'w', mode);
+    try {
+      writeSync(fd, `${JSON.stringify(value, null, 2)}\n`);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(temp, path);
+    try {
+      const directory = openSync(dirname(path), 'r');
+      try {
+        fsyncSync(directory);
+      } finally {
+        closeSync(directory);
+      }
+    } catch {
+      // Directory fsync is best effort; the file fsync and rename are the
+      // atomicity guarantee.
+    }
+  } catch (error) {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // The temp file may not exist; the original failure is what matters.
+    }
+    throw error;
+  }
 }
 
 export function readJson(path, fallback = undefined) {

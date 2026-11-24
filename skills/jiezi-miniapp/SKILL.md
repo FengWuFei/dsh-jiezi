@@ -6,9 +6,9 @@ description: Develop, modify, build, deploy, and debug JieZi Native Shell mini-a
 # JieZi mini-app development
 
 Deliver a working Native Shell app and verify the user's flow on the intended
-paired device. Source edits or compilation alone are not delivery. Use standard
-coding tools for source work and `miniapp_*` tools for authoritative build,
-install, launch, observation, and diagnostic results.
+paired device. Source edits or compilation alone are not delivery. Edit source with the
+normal tools; use `miniapp_*` for build, install, launch, observation, and
+diagnostics.
 
 ## Boundaries
 
@@ -20,6 +20,9 @@ install, launch, observation, and diagnostic results.
 - Use only capabilities and Host contracts the installed app actually supports.
   Reviewed `jiezi/native` components need no per-app grant on a current Host;
   a new native capability requires a Host release and explicit user approval.
+- Presentation is source: `jiezi.json` (summary + capability purposes) and
+  `docs/about.md` (restricted Markdown) ship in the signed `.jz`; the icon is
+  optional. Fix `JZ_*` refusals at the source, never bypass them.
 - Keep the existing app id and unrelated working code unless the task requires
   a different app. Do not bypass permission, pairing, or signature refusals.
 
@@ -27,22 +30,18 @@ install, launch, observation, and diagnostic results.
 
 ### 1. Inspect and define one acceptance flow
 
-When a project exists, read `nsh.json`, its entry TSX (normally `App.tsx`),
-`tsconfig.json`, related source, and tests. For a new empty workspace, call
+When a project exists, read `nsh.json`, `jiezi.json`, `docs/about.md`, its
+entry TSX (normally `App.tsx`), `tsconfig.json`, related source, and tests. For a new empty workspace, call
 `miniapp_init({ projectId, name?, appId? })` once with a lowercase slug. It runs
-the pinned official TSX scaffold, applies the JieZi counter/test template, and
-stages the native adapter in the current DSH working directory: by default the
-working directory itself becomes the project (it must be empty); with
-`projectLayout: named-subdirectory` the bridge creates `<cwd>/<projectId>`. No
-JieZi checkout, manual CLI lookup, or pre-existing template is required. Never
-use it to overwrite an existing/non-empty project.
+the pinned TSX scaffold, adds a counter/test template, stages the native
+adapter, and makes the empty working directory the project by default
+(`projectLayout: named-subdirectory` creates `<cwd>/<projectId>`). No JieZi checkout is required. Never use it to overwrite an existing project.
 Continue in the returned actual `projectDir`; subsequent `miniapp_build` calls
 can use its `projectId` directly.
 If the result reports `signing.signable: false`, the development certificate
 cannot sign that `appId`: tell the user before building and prefer the default
-`com.jiezi.miniapp.<slug>` id. Use the `read`, `glob`, and `grep` tools for
-inspection instead of `cat`/`find`/`grep -rn` through bash, which stay reserved
-for real commands such as `nsh test`, `nsh check`, or `shasum`.
+`com.jiezi.miniapp.<slug>` id. Inspect with the `read`, `glob`, and `grep` tools; reserve bash for real
+commands (`nsh test`, `nsh check`, `shasum`).
 
 Define the initial screen, actions, observable state changes, and requested
 persistence/error behavior. Ask only about user-owned choices that inspection
@@ -68,10 +67,9 @@ modules.
 
 Give every screen, interactive control, and important result/error a stable,
 unique `testID`; derive repeated-row ids from stable data ids, not array indices.
-Add appropriate roles/accessibility labels and semantic ready/success/error
-states. Update Native Shell signals through their APIs rather than assuming
-in-place mutations render. Run existing local checks when available, then use
-the JieZi build as the delivery gate.
+Add roles/accessibility labels and ready/success/error states. Update signals
+through their APIs, not in-place mutation assumptions. Run local checks, then
+the JieZi build as the gate.
 
 ### 3. Build and repair compile errors
 
@@ -79,17 +77,21 @@ the JieZi build as the delivery gate.
 miniapp_build({ projectId, projectDir? })
 ```
 
-A deployable result requires `ok: true` and a `releaseId`. Read reported source
-locations and `rawTail`; fix the source and create a new build. Never deploy or
-cite the attempted identity of a failed build.
+A deployable result requires `ok: true` and a `releaseId`. Each build packs a
+signed `.jz` around the `.nshpkg`, so the presentation rules for `jiezi.json`,
+`docs/about.md`, and the optional icon can fail it with a stable `JZ_*` code.
+Read reported source locations and `rawTail`; fix the source and rebuild. Never
+deploy or cite the attempted identity of a failed build. Read
+[presentation-and-package.md](references/presentation-and-package.md) before
+changing the name, summary, description, icon, or purposes, or when a `JZ_*`
+code appears.
 
 ### 4. Deploy the exact release and wait
 
-Use `miniapp_devices` to select the intended paired target. Its
-`jieziPaired`, `coreDevicePaired`, and `hostRunning` fields are separate facts.
-If needed, call `miniapp_device({ action: "ensure_ready", deviceId })`; before
-pairing, `launch_host` starts the installed Host. Pairing, unlocking, trusting,
-and restoring explicitly revoked automation are user actions.
+Use `miniapp_devices` to pick the paired target; `jieziPaired`,
+`coreDevicePaired`, and `hostRunning` are separate facts. `miniapp_device({
+action: "ensure_ready", deviceId })` recovers what it can; pairing, unlocking,
+trusting, and restoring revoked automation are user actions.
 
 ```text
 miniapp_deploy({ deviceId, releaseId })
@@ -111,18 +113,16 @@ instead of creating duplicate deployments.
 Start with `miniapp_ui`. Reuse its app/instance/snapshot identity and diagnostic
 cursor where available. For each key step, call `miniapp_action` with a unique
 fresh target and an `expect` (`visibleTestID`, `visibleLabel`, `textContains`,
-or `textEquals`, or `checks` for several scoped conditions at once). Hidden
+`textEquals`, or `checks`). Hidden
 nodes are omitted by default; do not set `includeHidden` unless diagnosing
 recycled rows. Use `tap`, `type`, or `scroll` as appropriate; re-observe after
 scrolling or stale snapshots. Read `state`, `error`, `verification.passed`,
 `snapshotIssues`, inline diagnostics, `hostAlert`/`host`, and runtime errors even
 when the envelope has `ok: true`.
 
-Use `includeFrames: true` for geometry. Use `miniapp_screen` for full-device
-pixels including Host chrome/modals, or `miniapp_capture` for its documented
-app-view evidence. Actually read returned images before making visual claims.
-Verify requested persistence, errors, or appearance modes separately; never
-imply untested coverage.
+Use `includeFrames: true` for geometry; `miniapp_screen` for full-device
+pixels, `miniapp_capture` for app-view evidence. Read images before visual
+claims; verify persistence/errors/appearance separately.
 
 Read [device-verification-and-repair.md](references/device-verification-and-repair.md)
 before the first device loop, for exact action habits, or when a result fails.

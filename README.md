@@ -131,6 +131,9 @@ miniapp_diagnostics ← miniapp_action(expect) ← miniapp_ui
 > [!NOTE]
 > `miniapp_init` 默认把**会话工作目录本身**作为项目根，目录必须为空。如果一个目录要容纳多个小程序，请将 `jiezi-tools` 的 `projectLayout` 配置为 `named-subdirectory`，项目会创建在 `<工作目录>/<projectId>`。
 
+> [!NOTE]
+> 每次 Release 都是单个签名 `.jz`：除可执行载荷外，还带应用库展示所需的图标、摘要、`docs/about.md` 说明和能力用途。这些是项目源码（`miniapp_init` 会生成），可直接编辑；构建会用稳定的 `JZ_*` 码指出摘要过长、说明含 HTML、图标尺寸/色彩空间不符或敏感能力缺用途等问题。
+
 > [!TIP]
 > **升级不会清空配对。** 插件更新、DSH 重启或桥接重启后，配对状态仍从 `~/.jiezi`（或配置的 `stateDir`）恢复，iPhone 使用原凭据自动重连，不需要重新初始化或扫码。
 
@@ -138,8 +141,8 @@ miniapp_diagnostics ← miniapp_action(expect) ← miniapp_ui
 
 | 分组 | 工具 | 作用 |
 | --- | --- | --- |
-| 项目 | `miniapp_init` | 从空目录初始化 Native Shell 项目，并预检开发证书对 `appId` 的覆盖范围 |
-| 构建 | `miniapp_build` | 构建并签名，返回包含 SHA-256 的不可变 Release；失败时给出结构化编译错误 |
+| 项目 | `miniapp_init` | 从空目录初始化 Native Shell 项目（含 `jiezi.json` 与 `docs/about.md` 表现层文件），并预检开发证书对 `appId` 的覆盖范围 |
+| 构建 | `miniapp_build` | 构建签名载荷并打包为单个 `.jz`（含图标、摘要、受限 Markdown 说明与能力用途），返回包含 SHA-256 的不可变 Release；失败时给出结构化编译错误与稳定 `JZ_*` 码 |
 | 交付 | `miniapp_deploy` | 将已签名 Release 安装到配对设备；`force: true` 强制重新安装 |
 | 交付 | `miniapp_reload` | 以新操作重新安装并启动当前 Release，用于恢复卡住的实例或处理宿主弹窗 |
 | 交付 | `miniapp_status` | 查询安装、运行时、宿主版本与桥接状态；支持等待操作终态 |
