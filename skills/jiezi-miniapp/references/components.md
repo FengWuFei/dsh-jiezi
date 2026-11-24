@@ -100,8 +100,8 @@ Both are leaf native views: give them `style={{ flex: 1 }}` or another bounded
 box and put NSH chrome around them, not children inside them. Their data is
 owned by the app; events report interactions and the app sends updated data.
 
-`miniapp_init` already stages this adapter. Only for a manually initialized
-project with no established staging step, copy the skill's complete
+`miniapp({ action: "init" })` stages this adapter. Only for a manually
+initialized project with no established staging step, copy the skill's complete
 `api/jiezi/native/` directory to
 `<project>/node_modules/jiezi/native`. This is the plugin-provided adapter, not
 an npm install, and it includes the runtime JavaScript as well as declarations.
@@ -122,8 +122,8 @@ const hasTable = components.some(
 
 Check the expected contract version when compatibility matters. Use the
 project's existing `If`/fallback pattern when the component is unavailable,
-especially under headless `nsh test`. Do not treat `miniapp_ui.capabilities`
-as this list: those values describe automation actions such as `tap`/`type`.
+especially under headless `nsh test`. A `miniapp_ui` outline is not a component
+catalog: it lists rendered nodes, not the components available to your source.
 
 ### `NativeUITableView`: structured data
 

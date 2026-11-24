@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "芥子小程序开发套件",
-    "description": "专属小程序开发 skill 与 miniapp_init 模板帮助第三方从空目录开始；支持 Native Shell TSX、组件查询、构建交付、真机验证与修复，侧栏显示本地配对二维码。",
+    "description": "专属小程序开发 skill 与 miniapp 初始化模板帮助第三方从空目录开始；支持 Native Shell TSX、组件查询、构建交付、真机验证与修复，侧栏显示本地配对二维码。",
     "detail": "docs/DETAIL.md"
   }
 }

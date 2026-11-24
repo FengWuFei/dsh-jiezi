@@ -48,6 +48,7 @@ test('芥子开发模式 is the shipped standard composition plus jiezi-tools', 
   assert.deepEqual(rowIds(presetBlock), [...expectedStandard, 'jiezi-tools']);
   assert.equal(new Set(rowIds(presetBlock)).size, rowIds(presetBlock).length);
   assert.match(presetBlock, /name: 'dsh-jiezi\/tools'/);
+  assert.match(presetBlock, /activationSkills: \['jiezi-miniapp'\]/);
   assert.doesNotMatch(presetBlock, /@deepseek-ai\/dsh-tool-cordis/);
   assert.match(presetBlock, /@deepseek-ai\/dsh-tool-web/);
   assert.match(patch, /autoStart: true/);

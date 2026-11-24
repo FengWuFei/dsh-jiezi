@@ -17,5 +17,5 @@ Layout and accessibility:
   decorative glyphs from screen readers with `accessibilityElementsHidden`.
 
 Ask the JieZi development Agent for the next feature. It should edit this
-project, run its checks, then use `miniapp_build`, `miniapp_deploy`, and
-`miniapp_status` before semantic device verification.
+project, run its checks, then use the `miniapp` tool's `build`, `deploy`, and
+`status` actions before semantic device verification.

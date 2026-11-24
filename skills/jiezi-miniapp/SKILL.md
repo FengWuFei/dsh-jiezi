@@ -1,30 +1,29 @@
 ---
 name: jiezi-miniapp
-description: Develop, modify, build, deploy, and debug JieZi Native Shell mini-apps (芥子小程序) using TSX and miniapp_* tools. Use for 创建/开发/修改/调试/构建/部署/验证芥子小程序, screens, reactive state, storage, declared native components, and compile/runtime/device failures in 芥子开发模式. Not for changing the iOS Host, bridge, signing system, or adding unsupported native capabilities.
+description: Develop, modify, build, deploy, and debug JieZi Native Shell mini-apps using TSX, the miniapp action tool, and the skill-gated miniapp_ui/miniapp_action tools. Use for 创建/开发/修改/调试/构建/部署/验证芥子小程序, screens, reactive state, storage, native components, and compile/runtime/device failures in 芥子开发模式. Not for changing the iOS Host, bridge, signing, or adding unsupported native capabilities.
 ---
 
 # JieZi mini-app development
 
 Deliver a working Native Shell app and verify the user's flow on the intended
-paired device. Source edits or compilation alone are not delivery. Edit source with the
-normal tools; use `miniapp_*` for build, install, launch, observation, and
-diagnostics.
+paired device. Source edits or compilation alone are not delivery. Edit source
+with the normal tools; use `miniapp` for project, build, delivery, device,
+doctor and diagnostics. Loading this skill admits `miniapp_ui` and
+`miniapp_action`; [tool-reference.md](references/tool-reference.md) lists the actions, key
+parameters, results and error codes.
 
 ## Boundaries
 
-- Stay inside the configured project root and preserve its Native Shell
-  template. Do not add npm dependencies, React Native/DOM code, native code,
-  another package manager, or a second toolchain.
-- Do not edit bridge state, DSH profiles, signing material, generated `.nsh`
-  files, or files outside the project. Never seek or embed credentials.
-- Use only capabilities and Host contracts the installed app actually supports.
-  Reviewed `jiezi/native` components need no per-app grant on a current Host;
-  a new native capability requires a Host release and explicit user approval.
-- Presentation is source: `jiezi.json` (summary + capability purposes) and
-  `docs/about.md` (restricted Markdown) ship in the signed `.jz`; the icon is
-  optional. Fix `JZ_*` refusals at the source, never bypass them.
-- Keep the existing app id and unrelated working code unless the task requires
-  a different app. Do not bypass permission, pairing, or signature refusals.
+- Stay inside the project: no npm dependencies, native/DOM code, second
+  toolchain, bridge/profile/signing edits, generated `.nsh` edits, or files
+  outside the project; never seek or embed credentials.
+- Use only capabilities the installed Host supports. Reviewed `jiezi/native`
+  components need no per-app grant; a new native capability needs a Host
+  release and explicit approval.
+- Presentation is source: `jiezi.json` and `docs/about.md` ship in the signed
+  `.jz`; fix `JZ_*` refusals at the source, never bypass them.
+- Keep the existing app id and working code; never bypass permission, pairing,
+  or signature refusals.
 
 ## Procedure
 
@@ -32,21 +31,20 @@ diagnostics.
 
 When a project exists, read `nsh.json`, `jiezi.json`, `docs/about.md`, its
 entry TSX (normally `App.tsx`), `tsconfig.json`, related source, and tests. For a new empty workspace, call
-`miniapp_init({ projectId, name?, appId? })` once with a lowercase slug. It runs
+`miniapp({ action: "init", projectId, name?, appId? })` once with a lowercase slug. It runs
 the pinned TSX scaffold, adds a counter/test template, stages the native
 adapter, and makes the empty working directory the project by default
 (`projectLayout: named-subdirectory` creates `<cwd>/<projectId>`). No JieZi checkout is required. Never use it to overwrite an existing project.
-Continue in the returned actual `projectDir`; subsequent `miniapp_build` calls
+Continue in the returned actual `projectDir`; subsequent `miniapp({ action: "build" })` calls
 can use its `projectId` directly.
 If the result reports `signing.signable: false`, the development certificate
 cannot sign that `appId`: tell the user before building and prefer the default
-`com.jiezi.miniapp.<slug>` id. Inspect with the `read`, `glob`, and `grep` tools; reserve bash for real
-commands (`nsh test`, `nsh check`, `shasum`).
+`com.jiezi.miniapp.<slug>` id.
 
 Define the initial screen, actions, observable state changes, and requested
 persistence/error behavior. Ask only about user-owned choices that inspection
 cannot resolve. If the bridge, toolchain, Host version, or pairing state is
-uncertain, call `miniapp_doctor` once and follow its `ready`/`blockers`/
+uncertain, call `miniapp({ action: "doctor" })` once and follow its `ready`/`blockers`/
 `nextActions` instead of guessing. Read
 [source-and-capabilities.md](references/source-and-capabilities.md)
 before substantial UI work, unfamiliar APIs, storage, or Host integration.
@@ -74,7 +72,7 @@ the JieZi build as the gate.
 ### 3. Build and repair compile errors
 
 ```text
-miniapp_build({ projectId, projectDir? })
+miniapp({ action: "build", projectId, projectDir? })
 ```
 
 A deployable result requires `ok: true` and a `releaseId`. Each build packs a
@@ -88,20 +86,21 @@ code appears.
 
 ### 4. Deploy the exact release and wait
 
-Use `miniapp_devices` to pick the paired target; `jieziPaired`,
-`coreDevicePaired`, and `hostRunning` are separate facts. `miniapp_device({
-action: "ensure_ready", deviceId })` recovers what it can; pairing, unlocking,
-trusting, and restoring revoked automation are user actions.
+Use `miniapp({ action: "device", deviceAction: "list" })` to pick the paired
+target; `jieziPaired`, `coreDevicePaired`, and `hostRunning` are separate facts.
+`miniapp({ action: "device", deviceAction: "ensure_ready", deviceId })` recovers
+what it can; pairing, unlocking, trusting, and restoring revoked automation are
+user actions.
 
 ```text
-miniapp_deploy({ deviceId, releaseId })
-miniapp_status({ opId, wait: true })
+miniapp({ action: "deploy", deviceId, releaseId })
+miniapp({ action: "status", opId, wait: true })
 ```
 
 A `deduplicated`/`reinstalled: false` deploy did not start a new install. For a
-stuck instance or a blocking Host alert, use `miniapp_reload({ deviceId })` (or
-`force: true`) and wait on its new opId. `miniapp_open` never restarts a running
-instance.
+stuck instance or a blocking Host alert, use
+`miniapp({ action: "reload", deviceId })` (or `force: true`) and wait on its new
+opId. `miniapp({ action: "open" })` never restarts a running instance.
 
 Read the terminal record. `running` proves only that this exact build launched
 without a runtime error during the startup settle window; it does not prove the
@@ -110,7 +109,7 @@ instead of creating duplicate deployments.
 
 ### 5. Verify semantics and visuals
 
-Start with `miniapp_ui`. Reuse its app/instance/snapshot identity and diagnostic
+Start with `miniapp_ui` (default `mode: "outline"`). Reuse its app/instance/snapshot identity and diagnostic
 cursor where available. For each key step, call `miniapp_action` with a unique
 fresh target and an `expect` (`visibleTestID`, `visibleLabel`, `textContains`,
 `textEquals`, or `checks`). Hidden
@@ -120,17 +119,17 @@ scrolling or stale snapshots. Read `state`, `error`, `verification.passed`,
 `snapshotIssues`, inline diagnostics, `hostAlert`/`host`, and runtime errors even
 when the envelope has `ok: true`.
 
-Use `includeFrames: true` for geometry; `miniapp_screen` for full-device
-pixels, `miniapp_capture` for app-view evidence. Read images before visual
-claims; verify persistence/errors/appearance separately.
+Use `includeFrames: true` for geometry; `miniapp_ui({ mode: "screen" })` for
+full-device pixels, `miniapp_ui({ mode: "capture" })` for app-view evidence. Read
+images before visual claims; verify persistence/errors/appearance separately.
 
 Read [device-verification-and-repair.md](references/device-verification-and-repair.md)
-before the first device loop, for exact action habits, or when a result fails.
+for exact action habits and failure routing.
 
 ### 6. Repair from evidence and repeat
 
-For a failed deployment or runtime behavior, call `miniapp_diagnostics` with
-its `opId` or `evidenceId`. Keep evidence scoped to that app instance. Fix
+For a failed deployment or runtime behavior, call
+`miniapp({ action: "diagnostics", opId })` (or `evidenceId`). Keep evidence scoped to that app instance. Fix
 compile/load/runtime source errors from actual diagnostics; check Host support
 for `host-component`; reduce or correctly declare usage for `refused` rather
 than bypassing it. `HOST_ALERT_BLOCKING` is a Host-layer alert: do not rebuild
@@ -144,8 +143,7 @@ device/app instance.
 
 ## Completion report
 
-State concisely: changed project and behavior; successful release/build and
-device if delivered; exact flows/expectations passed; inspected evidence; and
-remaining limitations or user action. If delivery or verification did not run,
-say so. Never claim “已完成并验证” from source edits, compilation, process
-launch, or a startup-only `running` result.
+State concisely: changed project and behavior; release/build and device when
+delivered; expectations that passed; inspected evidence; remaining limitations.
+If delivery or verification did not run, say so. Never claim “已完成并验证” from
+source edits, compilation, launch, or a startup-only `running` result.

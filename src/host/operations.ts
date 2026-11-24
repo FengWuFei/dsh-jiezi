@@ -167,7 +167,7 @@ function enrichDevice(
     nextAction = `Update the JieZi Host App (installed ${device.hostVersion ?? 'unknown'}, minimum ${MIN_HOST_VERSION}); 0.1.x can show the freeze-snapshot alert.`;
   } else if (!device.online) {
     nextAction = target !== null
-      ? `Launch the Host with miniapp_device { action: "launch_host", deviceId: "${device.deviceId}" }.`
+      ? `Launch the Host with miniapp { action: "device", deviceAction: "launch_host", deviceId: "${device.deviceId}" }.`
       : 'Unlock the iPhone and open the JieZi Host App, then refresh.';
   } else if (!device.developerMode) {
     nextAction = 'Open developer mode in the JieZi Host App.';
@@ -537,7 +537,7 @@ export class JieZiOperations {
 
   /**
    * Discover/bind/launch lifecycle targets, or recover one paired device.
-   * `list` returns the same device schema as `miniapp_devices`, enriched with
+   * `list` returns the same device schema as the former `miniapp_devices`, enriched with
    * CoreDevice pairing, Host presence/version, binding and one next action.
    */
   async device(args: unknown): Promise<Record<string, unknown>> {
@@ -611,7 +611,7 @@ export class JieZiOperations {
         target: resolved.target,
         device: enriched,
         launched: true,
-        nextAction: enriched.nextAction ?? 'Call miniapp_device with action ensure_ready if automation is still off.',
+        nextAction: enriched.nextAction ?? 'Call miniapp with action=\"device\", deviceAction=\"ensure_ready\" if automation is still off.',
       };
     }
 
@@ -642,7 +642,7 @@ export class JieZiOperations {
       state: 'launched',
       hostDeviceId: target.hostDeviceId,
       target,
-      nextAction: 'Pair the phone through the sidebar QR if no JieZi device is listed, then call miniapp_devices.',
+      nextAction: 'Pair the phone through the sidebar QR if no JieZi device is listed, then call miniapp with action=\"device\".',
     };
   }
 
@@ -663,7 +663,7 @@ export class JieZiOperations {
     };
   }
 
-  /** Restart the configured bridge, used by the panel and miniapp_doctor. */
+  /** Restart the configured bridge, used by the panel and the doctor action. */
   async restartBridge(): Promise<Record<string, unknown>> {
     if (this.bridgeSupervisor === null) {
       throw new JieZiError(
@@ -762,7 +762,7 @@ export class JieZiOperations {
       blockers.push({
         code: 'nsh',
         message: nsh?.error ?? 'nsh was not found',
-        action: fix ? 'Install jiezi-nsh or pass an explicit nshPath.' : 'Call miniapp_doctor with fix:true, then restart the bridge.',
+        action: fix ? 'Install jiezi-nsh or pass an explicit nshPath.' : 'Call miniapp with action=\"doctor\", fix:true, then restart the bridge.',
       });
     }
 
@@ -790,20 +790,20 @@ export class JieZiOperations {
         code: 'pairing',
         message: targets.length > 0 ? 'CoreDevice sees a phone, but no JieZi device is paired.' : 'No paired device and no CoreDevice target.',
         action: targets.length > 0
-          ? 'Generate the sidebar QR and pair the phone; or launch the Host with miniapp_device action launch_host.'
+          ? 'Generate the sidebar QR and pair the phone; or launch the Host with miniapp action=\"device\", deviceAction=\"launch_host\".'
           : 'Connect and unlock the iPhone, open the JieZi Host App, then pair with the sidebar QR.',
       });
     } else if (!devices.some((device) => device.online)) {
       blockers.push({
         code: 'host_running',
         message: 'A device is paired but the Host is not connected.',
-        action: 'Call miniapp_device with action launch_host and the paired deviceId.',
+        action: 'Call miniapp with action=\"device\", deviceAction=\"launch_host\" and the paired deviceId.',
       });
     } else if (!devices.some((device) => device.online && device.developerMode && device.automation)) {
       blockers.push({
         code: 'automation',
         message: 'The Host is connected but developer automation is not ready.',
-        action: 'Open developer mode and start automation on the phone; call miniapp_device ensure_ready to verify.',
+        action: 'Open developer mode and start automation on the phone; call miniapp with action=\"device\", deviceAction=\"ensure_ready\" to verify.',
       });
     }
     for (const device of devices) {
@@ -963,7 +963,7 @@ export class JieZiOperations {
         host,
         ...(warning === null ? {} : { warning }),
         reinstalled: false,
-        nextAction: 'The existing operation was not reinstalled. Use miniapp_reload (or miniapp_deploy with force:true) when a Host alert or stale instance is blocking automation.',
+        nextAction: 'The existing operation was not reinstalled. Use miniapp({ action: \"reload\" }) (or action=\"deploy\" with force:true) when a Host alert or stale instance is blocking automation.',
       };
     }
     return { ...result, host, ...(warning === null ? {} : { warning }), reinstalled: result.reinstalled !== false };
@@ -973,7 +973,7 @@ export class JieZiOperations {
    * Reinstall and relaunch the current release with a fresh operation id.
    * Omit releaseId to use the device's active release (or appId's installed
    * release). This is the supported way to clear a stuck instance or a Host
-   * alert; miniapp_open never restarts a running instance.
+   * alert; the open action never restarts a running instance.
    */
   async reload(args: unknown): Promise<Record<string, unknown>> {
     if (args === null || typeof args !== 'object' || Array.isArray(args)) {
@@ -1143,7 +1143,7 @@ export class JieZiOperations {
       instanceId: typeof current.instanceId === 'string' ? current.instanceId : null,
       error,
       host: await this.hostInfo(request.deviceId),
-      note: 'open never restarts a running instance; use miniapp_reload when a Host alert or stale instance blocks automation.',
+      note: 'open never restarts a running instance; use miniapp({ action: \"reload\" }) when a Host alert or stale instance blocks automation.',
     };
   }
 

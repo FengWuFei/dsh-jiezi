@@ -22,10 +22,10 @@ pages/, components/  existing organization when present
 *test*               existing local behavioral checks
 ```
 
-Do not edit `.nsh` generated files. `miniapp_build` accepts `projectId` and an
-optional `projectDir`; the bridge resolves the default from its configured
-project root and rejects directories outside it. Keep source separate from
-bridge artifacts, state, keys, and DSH configuration.
+Do not edit `.nsh` generated files. `miniapp({ action: "build" })` accepts
+`projectId` and an optional `projectDir`; the bridge resolves the default from
+its configured project root and rejects directories outside it. Keep source
+separate from bridge artifacts, state, keys, and DSH configuration.
 
 ## API and state discipline
 

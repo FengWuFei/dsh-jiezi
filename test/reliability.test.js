@@ -51,7 +51,7 @@ function contextFor(bridge) {
   return { tools, sections, cleanups };
 }
 
-test('miniapp_reload and miniapp_deploy force start a fresh operation', { timeout: 20_000 }, async () => {
+test('reload and deploy force start a fresh operation', { timeout: 20_000 }, async () => {
   const deploys = [];
   const bridge = await startFakeBridge(baseHandlers({
     'POST /v1/deploy': (body) => {
@@ -61,15 +61,15 @@ test('miniapp_reload and miniapp_deploy force start a fresh operation', { timeou
   }));
   const { tools, cleanups } = contextFor(bridge);
   try {
-    const reload = await tools.find((tool) => tool.name === 'miniapp_reload')
-      .execute({ deviceId: 'dev_1' }, {});
+    const reload = await tools.find((tool) => tool.name === 'miniapp')
+      .execute({ action: 'reload', deviceId: 'dev_1' }, {});
     assert.equal(reload.ok, true);
     assert.equal(reload.reload, true);
     assert.equal(reload.releaseId, 'rel_active');
     assert.deepEqual(deploys[0], { deviceId: 'dev_1', releaseId: 'rel_active', force: true });
 
-    const deploy = await tools.find((tool) => tool.name === 'miniapp_deploy')
-      .execute({ deviceId: 'dev_1', releaseId: 'rel_active', force: true }, {});
+    const deploy = await tools.find((tool) => tool.name === 'miniapp')
+      .execute({ action: 'deploy', deviceId: 'dev_1', releaseId: 'rel_active', force: true }, {});
     assert.equal(deploy.ok, true);
     assert.equal(deploys[1].force, true);
   } finally {
@@ -88,11 +88,11 @@ test('a deduplicated deploy does not claim a reinstall', { timeout: 20_000 }, as
   }));
   const { tools, cleanups } = contextFor(bridge);
   try {
-    const result = await tools.find((tool) => tool.name === 'miniapp_deploy')
-      .execute({ deviceId: 'dev_1', releaseId: 'rel_active' }, {});
+    const result = await tools.find((tool) => tool.name === 'miniapp')
+      .execute({ action: 'deploy', deviceId: 'dev_1', releaseId: 'rel_active' }, {});
     assert.equal(result.deduplicated, true);
     assert.equal(result.reinstalled, false);
-    assert.match(result.nextAction, /miniapp_reload/);
+    assert.match(result.nextAction, /action: "reload"/);
   } finally {
     await closeAll(cleanups, bridge);
   }
@@ -263,11 +263,11 @@ test('hidden recycled rows are dropped and can be opted back in', { timeout: 20_
   }
 });
 
-test('miniapp_devices shares one schema with miniapp_device list', { timeout: 20_000 }, async () => {
+test('the device action returns the unified device list', { timeout: 20_000 }, async () => {
   const bridge = await startFakeBridge(baseHandlers());
   const { tools, cleanups } = contextFor(bridge);
   try {
-    const result = await tools.find((tool) => tool.name === 'miniapp_devices').execute({}, {});
+    const result = await tools.find((tool) => tool.name === 'miniapp').execute({ action: 'device' }, {});
     assert.equal(result.ok, true);
     assert.equal(result.devices.length, 1);
     assert.equal(result.devices[0].jieziPaired, true);
@@ -283,7 +283,7 @@ test('miniapp_devices shares one schema with miniapp_device list', { timeout: 20
   }
 });
 
-test('miniapp_doctor returns a bounded readiness report without starting the bridge', { timeout: 30_000 }, async () => {
+test('doctor returns a bounded readiness report without starting the bridge', { timeout: 30_000 }, async () => {
   const stateDir = mkdtempSync(join(tmpdir(), 'jiezi-doctor-tool-'));
   const bridge = await startFakeBridge(baseHandlers({
     'GET /v1/health': () => ({ body: { ok: true, version: '0.3.4', socket: '/tmp/bridge.sock', pid: 42 } }),
@@ -291,7 +291,7 @@ test('miniapp_doctor returns a bounded readiness report without starting the bri
   const { ctx, tools, cleanups } = fakeContext();
   apply(ctx, { socketPath: bridge.socketPath, stateDir, timeoutMs: 2_000 });
   try {
-    const result = await tools.find((tool) => tool.name === 'miniapp_doctor').execute({}, {});
+    const result = await tools.find((tool) => tool.name === 'miniapp').execute({ action: 'doctor' }, {});
     assert.equal(result.ok, true);
     assert.equal(typeof result.ready, 'boolean');
     assert.ok(Array.isArray(result.blockers));

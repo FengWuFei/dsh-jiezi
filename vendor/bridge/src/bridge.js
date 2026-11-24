@@ -57,7 +57,7 @@ export function resolveCallRoot(configuredRoot, requested) {
   return real;
 }
 
-/** Accepted layouts for where `miniapp_init` places a new project. */
+/** Accepted layouts for where the miniapp init action places a new project. */
 export const PROJECT_LAYOUTS = ['working-directory', 'named-subdirectory'];
 
 /** Validate the caller's layout, defaulting to the working directory itself. */
@@ -70,7 +70,7 @@ export function resolveProjectLayout(value) {
 }
 
 /**
- * The exact directory `miniapp_init` scaffolds into. A call without a Session
+ * The exact directory the miniapp init action scaffolds into. A call without a Session
  * root, or the named layout, keeps `<root>/<projectId>`.
  */
 export function initDestination(root, layout, projectId, hasSessionRoot) {
@@ -779,8 +779,8 @@ export class Bridge {
         resent,
         reinstalled: false,
         nextAction: existing.state === 'pending' && resent
-          ? 'The existing operation was resent; wait for it with miniapp_status. If the instance is stuck or a Host alert blocks automation, use miniapp_reload.'
-          : 'No new install was started. Use miniapp_reload or miniapp_deploy with force:true to reinstall the same release when the instance is stuck or a Host alert is blocking automation.',
+          ? 'The existing operation was resent; wait for it with miniapp action=status. If the instance is stuck or a Host alert blocks automation, use miniapp action=reload.'
+          : 'No new install was started. Use miniapp action=reload or action=deploy with force:true to reinstall the same release when the instance is stuck or a Host alert is blocking automation.',
       };
     }
 

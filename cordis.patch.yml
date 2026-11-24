@@ -153,12 +153,16 @@
             name: '@deepseek-ai/dsh-plugin-market/tools'
             disabled: true
 
-          # JieZi-only: mini-app delivery/automation tools and prompt section.
+          # JieZi-only: one action-enum gateway, two skill-gated observation
+          # tools and the five-rule prompt section.
           - id: jiezi-tools
             name: 'dsh-jiezi/tools'
             config:
               autoStart: true
-              # working-directory: miniapp_init uses the Session working directory
+              # miniapp_ui/miniapp_action are admitted only after this skill
+              # loads, so ordinary coding sessions keep one extra tool.
+              activationSkills: ['jiezi-miniapp']
+              # working-directory: the init action uses the Session working directory
               # itself as the project (it must be empty). named-subdirectory:
               # it creates <working directory>/<projectId> instead.
               projectLayout: working-directory

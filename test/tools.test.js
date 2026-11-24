@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { apply } from '../lib/tools.js';
+import { getSharedOperations } from '../lib/host/operations.js';
 import { startFakeBridge } from './support/fake-bridge.js';
 
 /** Poll a predicate until it holds or the deadline passes. */
@@ -15,15 +16,20 @@ async function waitFor(predicate, ms = 2_000) {
   if (!predicate()) throw new Error('condition was not met before the deadline');
 }
 
-function fakeContext(initialSections = [], sandboxPolicy) {
+function fakeContext(initialSections = [], options = {}) {
   const tools = [];
+  const registrations = [];
   const sections = [...initialSections];
   const cleanups = [];
+  const listeners = new Map();
   const ctx = {
-    ...(sandboxPolicy === undefined ? {} : {
-      get(name) { return name === 'sandboxPolicy' ? sandboxPolicy : undefined; },
-    }),
-    tools: { register(definition) { tools.push(definition); return () => {}; } },
+    tools: {
+      register(definition, registration) {
+        tools.push(definition);
+        registrations.push({ definition, options: registration });
+        return () => {};
+      },
+    },
     systemPrompt: { section(section) {
       sections.push(section);
       return () => {
@@ -36,8 +42,23 @@ function fakeContext(initialSections = [], sandboxPolicy) {
       cleanups.push(cleanup);
       return cleanup;
     },
+    on(event, handler) {
+      let handlers = listeners.get(event);
+      if (handlers === undefined) {
+        handlers = new Set();
+        listeners.set(event, handlers);
+      }
+      handlers.add(handler);
+      return () => handlers.delete(handler);
+    },
+    get(name) {
+      return options.services?.[name];
+    },
   };
-  return { ctx, tools, sections, cleanups };
+  const emit = (event, ...args) => {
+    for (const handler of listeners.get(event) ?? []) handler(...args);
+  };
+  return { ctx, tools, registrations, sections, cleanups, emit };
 }
 
 const snapshot = {
@@ -106,43 +127,67 @@ function handlers(captureTrees) {
   };
 }
 
-test('preset registers fourteen bounded tools, a prompt section, and the sidebar hooks', { timeout: 20_000 }, async () => {
+test('preset registers one gateway, two skill-gated tools and a five-rule section', { timeout: 20_000 }, async () => {
   const trees = { value: { role: 'root' } };
   const bridge = await startFakeBridge(handlers(trees), {
     events: 'event: status\ndata: {"opId":"op_1","state":"running"}\n\n',
     triggerOn: 'POST /v1/deploy',
   });
-  const { ctx, tools, sections, cleanups } = fakeContext();
+  const { ctx, tools, registrations, sections, cleanups } = fakeContext();
   try {
     apply(ctx, { socketPath: bridge.socketPath, timeoutMs: 2_000 });
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), [
-      'miniapp_action', 'miniapp_build', 'miniapp_capture', 'miniapp_deploy',
-      'miniapp_device', 'miniapp_devices', 'miniapp_diagnostics', 'miniapp_doctor',
-      'miniapp_init', 'miniapp_open', 'miniapp_reload', 'miniapp_screen',
-      'miniapp_status', 'miniapp_ui',
-    ]);
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), ['miniapp', 'miniapp_action', 'miniapp_ui']);
     assert.equal(sections.length, 1);
-    assert.match(sections[0].text, /host-component/);
-    assert.match(sections[0].text, /miniapp_ui/);
-    assert.match(sections[0].text, /jiezi-miniapp/);
-    assert.match(sections[0].text, /components\.md/);
-    assert.match(sections[0].text, /user action/);
+    const prompt = sections[0].text;
+    assert.match(prompt, /jiezi-miniapp/);
+    assert.match(prompt, /miniapp_ui/);
+    assert.match(prompt, /miniapp_action/);
+    assert.match(prompt, /JZ_\*/);
+    assert.match(prompt, /Host alert/);
+    assert.match(prompt, /terminal operation status/);
+    assert.ok(prompt.length <= 2_048, `prompt section stays bounded (${prompt.length} chars)`);
+
+    const gateway = registrations.find((entry) => entry.definition.name === 'miniapp');
+    assert.equal(gateway.options, undefined, 'the gateway is always-on');
+    assert.deepEqual(
+      gateway.definition.parameters.properties.action.enum,
+      ['init', 'build', 'deploy', 'status', 'reload', 'open', 'device', 'doctor', 'diagnostics'],
+    );
+    const ui = registrations.find((entry) => entry.definition.name === 'miniapp_ui');
+    assert.equal(typeof ui.options.when, 'function');
+    assert.deepEqual(ui.definition.parameters.properties.mode.enum, ['outline', 'capture', 'screen']);
+    const action = registrations.find((entry) => entry.definition.name === 'miniapp_action');
+    assert.equal(typeof action.options.when, 'function');
+
+    const sizeOf = (entry) => JSON.stringify({
+      description: entry.definition.description,
+      parameters: entry.definition.parameters,
+    }).length;
+    for (const entry of [gateway, ui, action]) {
+      assert.ok(
+        sizeOf(entry) <= 4_096,
+        `${entry.definition.name} definition stays under 4 KB (${sizeOf(entry)} bytes)`,
+      );
+    }
 
     const byName = (name) => tools.find((tool) => tool.name === name);
-
-    const initialized = await byName('miniapp_init').execute({ projectId: 'demo', name: 'Demo', appId: 'com.example.demo' }, {});
+    const initialized = await byName('miniapp').execute({ action: 'init', projectId: 'demo', name: 'Demo', appId: 'com.example.demo' }, {});
     assert.equal(initialized.ok, true);
     assert.equal(initialized.projectId, 'demo');
     assert.equal(initialized.projectDir, '/tmp/jiezi-projects/demo');
     assert.equal(initialized.template, 'jiezi-basic@1');
 
-    const devices = await byName('miniapp_devices').execute({}, {});
+    const devices = await byName('miniapp').execute({ action: 'device', deviceAction: 'list' }, {});
     assert.equal(devices.ok, true);
     assert.equal(devices.devices.length, 1);
     assert.equal(devices.devices[0].deviceId, 'dev_1');
     assert.equal(devices.devices[0].online, true);
     assert.equal(devices.devices[0].developerMode, true);
     assert.equal(devices.devices[0].automation, true);
+
+    const defaultDevices = await byName('miniapp').execute({ action: 'device' }, {});
+    assert.equal(defaultDevices.ok, true);
+    assert.equal(defaultDevices.devices.length, 1);
 
     const observes = await byName('miniapp_ui').execute({ deviceId: 'dev_1' }, {});
     assert.equal(observes.ok, true);
@@ -161,36 +206,57 @@ test('preset registers fourteen bounded tools, a prompt section, and the sidebar
     assert.equal(tap.state, 'failed');
     assert.deepEqual(tap.error, { code: 'target_not_found', message: 'no unique visible target matched', category: 'device' });
 
-    const capture = await byName('miniapp_capture').execute({ deviceId: 'dev_1', waitMs: 1_000 }, {});
+    const capture = await byName('miniapp_ui').execute({ deviceId: 'dev_1', mode: 'capture', waitMs: 1_000 }, {});
     assert.equal(capture.ok, true);
     assert.equal(capture.state, 'done');
     assert.deepEqual(capture.tree, { role: 'root' });
     assert.equal(capture.screenshotPath, '/tmp/cap_1.png');
 
     trees.value = { rows: Array.from({ length: 200 }, (_, index) => ({ id: `row-${index}`, title: 'x'.repeat(80) })) };
-    const large = await byName('miniapp_capture').execute({ deviceId: 'dev_1', waitMs: 1_000 }, {});
+    const large = await byName('miniapp_ui').execute({ deviceId: 'dev_1', mode: 'capture', waitMs: 1_000 }, {});
     assert.equal(large.ok, true);
     assert.equal(large.tree, null);
     assert.equal(large.treeTruncated, true);
     assert.ok(large.treeChars > 12_000);
     assert.equal(large.screenshotPath, '/tmp/cap_1.png');
 
-    const reread = await byName('miniapp_capture').execute({ deviceId: 'dev_1', requestId: 'cap_1', waitMs: 1_000 }, {});
+    const reread = await byName('miniapp_ui').execute({ deviceId: 'dev_1', mode: 'capture', requestId: 'cap_1', waitMs: 1_000 }, {});
     assert.equal(reread.ok, true);
     assert.equal(reread.state, 'done');
     assert.equal(reread.requestId, 'cap_1');
 
-    const diagnostics = await byName('miniapp_diagnostics').execute({}, {});
+    const diagnostics = await byName('miniapp').execute({ action: 'diagnostics' }, {});
     assert.equal(diagnostics.ok, false);
     assert.equal(diagnostics.code, 'invalid_request');
 
-    const invalid = await byName('miniapp_deploy').execute(null, {});
+    const unknown = await byName('miniapp').execute({ action: 'explode' }, {});
+    assert.equal(unknown.ok, false);
+    assert.equal(unknown.code, 'invalid_request');
+
+    const invalid = await byName('miniapp').execute(null, {});
     assert.equal(invalid.ok, false);
     assert.equal(invalid.code, 'invalid_request');
 
+    const badDevice = await byName('miniapp').execute({ action: 'device', deviceAction: 'bogus' }, {});
+    assert.equal(badDevice.ok, false);
+    assert.equal(badDevice.code, 'invalid_request');
+    const badMode = await byName('miniapp_ui').execute({ deviceId: 'dev_1', mode: 'bogus' }, {});
+    assert.equal(badMode.ok, false);
+    assert.equal(badMode.code, 'invalid_request');
+
+    const wrongDeployKey = await byName('miniapp').execute({ action: 'deploy', deviceId: 'dev_1', releaseId: 'rel_1', appId: 'com.x' }, {});
+    assert.equal(wrongDeployKey.ok, false);
+    assert.equal(wrongDeployKey.code, 'invalid_request');
+    const wrongCaptureKey = await byName('miniapp_ui').execute({ deviceId: 'dev_1', mode: 'capture', appId: 'com.x' }, {});
+    assert.equal(wrongCaptureKey.ok, false);
+    assert.equal(wrongCaptureKey.code, 'invalid_request');
+    const wrongScreenKey = await byName('miniapp_ui').execute({ deviceId: 'dev_1', mode: 'screen', waitMs: 10 }, {});
+    assert.equal(wrongScreenKey.ok, false);
+    assert.equal(wrongScreenKey.code, 'invalid_request');
+
     const followups = [];
     const injects = [];
-    const deployed = await byName('miniapp_deploy').execute({ deviceId: 'dev_1', releaseId: 'rel_1' }, {
+    const deployed = await byName('miniapp').execute({ action: 'deploy', deviceId: 'dev_1', releaseId: 'rel_1' }, {
       agent: {
         status: 'idle',
         followup(message) { followups.push(message); },
@@ -205,7 +271,7 @@ test('preset registers fourteen bounded tools, a prompt section, and the sidebar
     assert.equal(followups.length, 1);
     assert.equal(injects.length, 0);
     assert.match(followups[0].content[0].text, /JieZi delivery update for op_1: running/);
-    assert.match(followups[0].content[0].text, /miniapp_ui/);
+    assert.match(followups[0].content[0].text, /action="diagnostics"/);
     assert.deepEqual(followups[0].source, {
       kind: 'jiezi-delivery', form: 'notice', summary: 'deploy op_1 running', opId: 'op_1', state: 'running',
     });
@@ -214,6 +280,196 @@ test('preset registers fourteen bounded tools, a prompt section, and the sidebar
       try { await cleanup?.(); } catch { /* teardown is best effort */ }
     }
     await bridge.close();
+  }
+});
+
+test('observation tools stay hidden until the activation skill loads', async () => {
+  const bridge = await startFakeBridge(handlers({ value: null }));
+  const agents = new Map();
+  const { ctx, registrations, emit, cleanups } = fakeContext([], {
+    services: { agents: { get: (id) => agents.get(id) } },
+  });
+  try {
+    apply(ctx, { socketPath: bridge.socketPath, timeoutMs: 2_000 });
+    const ui = registrations.find((entry) => entry.definition.name === 'miniapp_ui');
+    const action = registrations.find((entry) => entry.definition.name === 'miniapp_action');
+    const makeAgent = () => ({ status: 'idle', followup() {}, session: {} });
+
+    const idle = makeAgent();
+    assert.equal(ui.options.when({ agent: idle }), false);
+    assert.equal(action.options.when({ agent: idle }), false);
+    assert.equal(ui.options.when({}), false);
+
+    const loaded = makeAgent();
+    emit('tools/result', { agent: loaded, name: 'skill', arguments: { name: 'jiezi-miniapp' } }, { isError: false });
+    assert.equal(ui.options.when({ agent: loaded }), true);
+    assert.equal(action.options.when({ agent: loaded }), true);
+
+    const failed = makeAgent();
+    emit('tools/result', { agent: failed, name: 'skill', arguments: { name: 'jiezi-miniapp' } }, { isError: true });
+    assert.equal(ui.options.when({ agent: failed }), false, 'a failed skill load admits nothing');
+
+    const other = makeAgent();
+    emit('tools/result', { agent: other, name: 'skill', arguments: { name: 'other-skill' } }, { isError: false });
+    assert.equal(ui.options.when({ agent: other }), false, 'only configured skills activate the tools');
+
+    const invoked = makeAgent();
+    const invokedSession = { id: 'session-1' };
+    invoked.session = invokedSession;
+    agents.set('session-1', invoked);
+    emit('session/event', invokedSession, {
+      type: 'user/message',
+      data: { source: { kind: 'skill-invocation', name: 'jiezi-miniapp' } },
+    });
+    assert.equal(ui.options.when({ agent: invoked }), true, 'a user-invoked skill also admits the tools');
+
+    const impostor = makeAgent();
+    impostor.session = { id: 'session-1' };
+    agents.set('session-1', impostor);
+    emit('session/event', invokedSession, {
+      type: 'user/message',
+      data: { source: { kind: 'skill-invocation', name: 'jiezi-miniapp' } },
+    });
+    assert.equal(ui.options.when({ agent: impostor }), false, 'a session/agent mismatch marks nobody');
+
+    const resumed = makeAgent();
+    resumed.session = { requestHeader: () => ({ tools: [{ name: 'miniapp_action' }] }) };
+    assert.equal(action.options.when({ agent: resumed }), true, 'a prior declaration survives resume/fork');
+    assert.equal(ui.options.when({ agent: resumed }), true);
+
+    emit('agent/disposed', { agent: loaded });
+    assert.equal(ui.options.when({ agent: loaded }), false, 'disposal clears the in-memory mark');
+  } finally {
+    for (const cleanup of cleanups.reverse()) {
+      try { await cleanup?.(); } catch { /* teardown is best effort */ }
+    }
+    await bridge.close();
+  }
+});
+
+test('activationSkills is validated instead of silently defaulted', async () => {
+  const socketPath = join(tmpdir(), `jiezi-config-${process.pid}.sock`);
+  for (const activationSkills of [[], ['bad name'], [1], 'jiezi-miniapp']) {
+    const { ctx, cleanups } = fakeContext();
+    assert.throws(
+      () => apply(ctx, { socketPath, activationSkills }),
+      /activationSkills/,
+      `apply rejects ${JSON.stringify(activationSkills)}`,
+    );
+    for (const cleanup of cleanups.reverse()) {
+      try { await cleanup?.(); } catch { /* teardown is best effort */ }
+    }
+  }
+
+  const { ctx, registrations, emit, cleanups } = fakeContext();
+  try {
+    apply(ctx, { socketPath, activationSkills: ['other-skill'] });
+    const ui = registrations.find((entry) => entry.definition.name === 'miniapp_ui');
+    const agent = { status: 'idle', followup() {}, session: {} };
+    emit('tools/result', { agent, name: 'skill', arguments: { name: 'jiezi-miniapp' } }, { isError: false });
+    assert.equal(ui.options.when({ agent }), false, 'the configured skill is the only activation name');
+    emit('tools/result', { agent, name: 'skill', arguments: { name: 'other-skill' } }, { isError: false });
+    assert.equal(ui.options.when({ agent }), true);
+  } finally {
+    for (const cleanup of cleanups.reverse()) {
+      try { await cleanup?.(); } catch { /* teardown is best effort */ }
+    }
+  }
+});
+
+test('every former tool capability is reachable through the three tools', async () => {
+  const socketPath = join(tmpdir(), `jiezi-parity-${process.pid}.sock`);
+  const config = { socketPath, timeoutMs: 2_000 };
+  const operations = getSharedOperations(config);
+  const calls = [];
+  const stub = (name) => async (...args) => {
+    calls.push({ name, args });
+    return { ok: true };
+  };
+  const names = [
+    'init', 'build', 'deploy', 'operation', 'diagnostics', 'reload', 'open',
+    'device', 'doctor', 'capture', 'screen', 'startAutomation', 'automation',
+  ];
+  const saved = {};
+  for (const name of names) {
+    saved[name] = operations[name];
+    operations[name] = stub(name);
+  }
+  const { ctx, tools, cleanups } = fakeContext();
+  try {
+    apply(ctx, config);
+    const gateway = tools.find((tool) => tool.name === 'miniapp');
+    const ui = tools.find((tool) => tool.name === 'miniapp_ui');
+    const action = tools.find((tool) => tool.name === 'miniapp_action');
+    const caseOf = (legacy, execute, method, assertArgs) => {
+      calls.length = 0;
+      return { legacy, execute, method, assertArgs };
+    };
+    const cases = [
+      caseOf('miniapp_init', () => gateway.execute({ action: 'init', projectId: 'demo', name: 'D', appId: 'com.x.d' }, {}), 'init', (args) => {
+        assert.deepEqual(args[0], { projectId: 'demo', name: 'D', appId: 'com.x.d' });
+      }),
+      caseOf('miniapp_build', () => gateway.execute({ action: 'build', projectId: 'demo', projectDir: '/p' }, {}), 'build', (args) => {
+        assert.deepEqual(args[0], { projectId: 'demo', projectDir: '/p' });
+      }),
+      caseOf('miniapp_deploy', () => gateway.execute({ action: 'deploy', deviceId: 'dev_1', releaseId: 'rel_1', force: true }, {}), 'deploy', (args) => {
+        assert.deepEqual(args[0], { deviceId: 'dev_1', releaseId: 'rel_1', force: true });
+      }),
+      caseOf('miniapp_status', () => gateway.execute({ action: 'status', deviceId: 'dev_1' }, {}), 'operation', (args) => {
+        assert.deepEqual(args[0], { deviceId: 'dev_1' });
+      }),
+      caseOf('miniapp_diagnostics', () => gateway.execute({ action: 'diagnostics', evidenceId: 'ev_1' }, {}), 'diagnostics', (args) => {
+        assert.deepEqual(args[0], { evidenceId: 'ev_1' });
+      }),
+      caseOf('miniapp_reload', () => gateway.execute({ action: 'reload', deviceId: 'dev_1', releaseId: 'rel_1', appId: 'com.x' }, {}), 'reload', (args) => {
+        assert.deepEqual(args[0], { deviceId: 'dev_1', releaseId: 'rel_1', appId: 'com.x' });
+      }),
+      caseOf('miniapp_open', () => gateway.execute({ action: 'open', deviceId: 'dev_1', appId: 'com.x', timeoutMs: 5_000 }, {}), 'open', (args) => {
+        assert.deepEqual(args[0], { deviceId: 'dev_1', appId: 'com.x', timeoutMs: 5_000 });
+      }),
+      caseOf('miniapp_devices', () => gateway.execute({ action: 'device', deviceAction: 'list' }, {}), 'device', (args) => {
+        assert.deepEqual(args[0], { action: 'list' });
+      }),
+      caseOf('miniapp_device.ensure_ready', () => gateway.execute({ action: 'device', deviceAction: 'ensure_ready', deviceId: 'dev_1', waitMs: 30_000 }, {}), 'device', (args) => {
+        assert.deepEqual(args[0], { action: 'ensure_ready', deviceId: 'dev_1', waitMs: 30_000 });
+      }),
+      caseOf('miniapp_device.launch_host', () => gateway.execute({ action: 'device', deviceAction: 'launch_host', hostDeviceId: 'UDID', rebind: true }, {}), 'device', (args) => {
+        assert.deepEqual(args[0], { action: 'launch_host', hostDeviceId: 'UDID', rebind: true });
+      }),
+      caseOf('miniapp_doctor', () => gateway.execute({ action: 'doctor', fix: true }, {}), 'doctor', (args) => {
+        assert.deepEqual(args[0], { fix: true });
+      }),
+      caseOf('miniapp_ui', () => ui.execute({ deviceId: 'dev_1', includeFrames: true }, {}), 'startAutomation', (args) => {
+        assert.equal(args[0].deviceId, 'dev_1');
+        assert.equal(args[0].action, 'observe');
+        assert.equal(args[0].includeFrames, true);
+        assert.match(args[0].opId, /^op_auto_/);
+      }),
+      caseOf('miniapp_capture', () => ui.execute({ deviceId: 'dev_1', mode: 'capture', waitMs: 1_000, requestId: 'cap_9' }, {}), 'capture', (args) => {
+        assert.deepEqual(args[0], { deviceId: 'dev_1', waitMs: 1_000, requestId: 'cap_9' });
+      }),
+      caseOf('miniapp_screen', () => ui.execute({ deviceId: 'dev_1', mode: 'screen', hostDeviceId: 'UDID' }, {}), 'screen', (args) => {
+        assert.deepEqual(args[0], { deviceId: 'dev_1', hostDeviceId: 'UDID' });
+      }),
+      caseOf('miniapp_action', () => action.execute({ deviceId: 'dev_1', target: { testID: 'save' }, expect: { visibleTestID: 'save' } }, {}), 'automation', (args) => {
+        assert.equal(args[0].deviceId, 'dev_1');
+        assert.equal(args[0].action, 'tap');
+        assert.deepEqual(args[0].target, { testID: 'save' });
+        assert.deepEqual(args[0].expect, { visibleTestID: 'save' });
+      }),
+    ];
+    for (const entry of cases) {
+      calls.length = 0;
+      await entry.execute();
+      const call = calls.find((item) => item.name === entry.method);
+      assert.ok(call, `${entry.legacy} routes to operations.${entry.method}`);
+      entry.assertArgs?.(call.args);
+    }
+  } finally {
+    for (const name of names) operations[name] = saved[name];
+    for (const cleanup of cleanups.reverse()) {
+      try { await cleanup?.(); } catch { /* teardown is best effort */ }
+    }
   }
 });
 
@@ -234,11 +490,9 @@ test('JieZi guidance adds a non-exclusive section and preserves the standard pro
     assert.equal(jiezi.interpolate, false);
     assert.match(jiezi.retirement, /no longer apply/);
     assert.match(jiezi.text, /supplement the standard Agent guidance/);
-    assert.match(jiezi.text, /miniapp_init/);
-    assert.match(jiezi.text, /components\.md/);
-    assert.match(jiezi.text, /miniapp_status/);
-    assert.match(jiezi.text, /jiezi\.json/);
-    assert.match(jiezi.text, /docs\/about\.md/);
+    assert.match(jiezi.text, /jiezi-miniapp/);
+    assert.match(jiezi.text, /releaseId/);
+    assert.match(jiezi.text, /action=diagnostics/);
     assert.match(jiezi.text, /JZ_\*/);
   } finally {
     for (const cleanup of cleanups.reverse()) {
@@ -357,10 +611,10 @@ test('a busy Agent is injected with a labelled delivery notice', { timeout: 20_0
   try {
     apply(ctx, { socketPath: bridge.socketPath, timeoutMs: 2_000 });
     await waitFor(() => streamReady);
-    const deploy = tools.find((tool) => tool.name === 'miniapp_deploy');
+    const gateway = tools.find((tool) => tool.name === 'miniapp');
     const followups = [];
     const injects = [];
-    const deployed = await deploy.execute({ deviceId: 'dev_1', releaseId: 'rel_1' }, {
+    const deployed = await gateway.execute({ action: 'deploy', deviceId: 'dev_1', releaseId: 'rel_1' }, {
       agent: {
         status: 'running',
         followup(message) { followups.push(message); },
@@ -373,6 +627,7 @@ test('a busy Agent is injected with a labelled delivery notice', { timeout: 20_0
     assert.equal(injects.length, 1);
     assert.match(injects[0].content[0].text, /JieZi delivery update for op_1: failed \(runtime\)/);
     assert.match(injects[0].content[0].text, /Evidence id: ev_1/);
+    assert.match(injects[0].content[0].text, /action="diagnostics"/);
     assert.deepEqual(injects[0].source, {
       kind: 'jiezi-delivery',
       form: 'notice',
@@ -390,7 +645,7 @@ test('a busy Agent is injected with a labelled delivery notice', { timeout: 20_0
   }
 });
 
-test('miniapp_status wait returns the terminal record and suppresses the notice', { timeout: 20_000 }, async () => {
+test('miniapp status wait returns the terminal record and suppresses the notice', { timeout: 20_000 }, async () => {
   const opState = { value: 'pending' };
   let emit = null;
   const bridge = await startFakeBridge({
@@ -403,7 +658,7 @@ test('miniapp_status wait returns the terminal record and suppresses the notice'
   const { ctx, tools, cleanups } = fakeContext();
   try {
     apply(ctx, { socketPath: bridge.socketPath, timeoutMs: 2_000 });
-    const byName = (name) => tools.find((tool) => tool.name === name);
+    const gateway = tools.find((tool) => tool.name === 'miniapp');
     const followups = [];
     const injects = [];
     const agent = {
@@ -411,11 +666,11 @@ test('miniapp_status wait returns the terminal record and suppresses the notice'
       followup(message) { followups.push(message); },
       inject(message) { injects.push(message); },
     };
-    const deployed = await byName('miniapp_deploy').execute({ deviceId: 'dev_1', releaseId: 'rel_1' }, { agent });
+    const deployed = await gateway.execute({ action: 'deploy', deviceId: 'dev_1', releaseId: 'rel_1' }, { agent });
     assert.equal(deployed.ok, true);
 
-    const pending = byName('miniapp_status').execute(
-      { opId: 'op_wait', wait: true, timeoutMs: 5_000 },
+    const pending = gateway.execute(
+      { action: 'status', opId: 'op_wait', wait: true, timeoutMs: 5_000 },
       { agent, signal: new AbortController().signal },
     );
     await waitFor(() => emit !== null && bridge.requests.some((request) => request.path === '/v1/ops/op_wait'));
@@ -446,10 +701,10 @@ test('a timed-out or cancelled wait reports the current state without waking the
   const { ctx, tools, cleanups } = fakeContext();
   try {
     apply(ctx, { socketPath: bridge.socketPath, timeoutMs: 2_000 });
-    const status = tools.find((tool) => tool.name === 'miniapp_status');
+    const status = tools.find((tool) => tool.name === 'miniapp');
 
     const started = Date.now();
-    const timedOut = await status.execute({ opId: 'op_slow', wait: true, timeoutMs: 1_000 }, {});
+    const timedOut = await status.execute({ action: 'status', opId: 'op_slow', wait: true, timeoutMs: 1_000 }, {});
     assert.ok(Date.now() - started >= 900);
     assert.equal(timedOut.ok, true);
     assert.equal(timedOut.timedOut, true);
@@ -457,16 +712,16 @@ test('a timed-out or cancelled wait reports the current state without waking the
 
     const controller = new AbortController();
     const waiting = status.execute(
-      { opId: 'op_slow', wait: true, timeoutMs: 5_000 },
+      { action: 'status', opId: 'op_slow', wait: true, timeoutMs: 5_000 },
       { signal: controller.signal },
     );
     setTimeout(() => controller.abort(new Error('cancelled by test')), 50);
     await assert.rejects(waiting, /cancelled by test/);
 
-    const noOp = await status.execute({ wait: true }, {});
+    const noOp = await status.execute({ action: 'status', wait: true }, {});
     assert.equal(noOp.ok, false);
     assert.equal(noOp.code, 'invalid_request');
-    const badTimeout = await status.execute({ opId: 'op_slow', wait: true, timeoutMs: 10 }, {});
+    const badTimeout = await status.execute({ action: 'status', opId: 'op_slow', wait: true, timeoutMs: 10 }, {});
     assert.equal(badTimeout.ok, false);
     assert.equal(badTimeout.code, 'invalid_request');
   } finally {
@@ -550,19 +805,18 @@ test('init and build target the Session working directory', { timeout: 20_000 },
   const { ctx, tools, cleanups } = fakeContext();
   try {
     apply(ctx, { socketPath: bridge.socketPath, timeoutMs: 2_000 });
+    const gateway = tools.find((tool) => tool.name === 'miniapp');
     const session = { header: { cwd: '/Users/someone/work/demo' } };
     const exec = { agent: { session } };
-    await tools.find((tool) => tool.name === 'miniapp_init')
-      .execute({ projectId: 'demo' }, exec);
-    await tools.find((tool) => tool.name === 'miniapp_build')
-      .execute({ projectId: 'demo' }, exec);
+    await gateway.execute({ action: 'init', projectId: 'demo' }, exec);
+    await gateway.execute({ action: 'build', projectId: 'demo' }, exec);
 
     const init = bridge.requests.find((request) => request.method === 'POST' && request.path === '/v1/projects/init');
     assert.equal(init.body.root, '/Users/someone/work/demo');
     const build = bridge.requests.find((request) => request.method === 'POST' && request.path === '/v1/build');
     assert.equal(build.body.root, '/Users/someone/work/demo');
 
-    await tools.find((tool) => tool.name === 'miniapp_init').execute({ projectId: 'other' }, undefined);
+    await gateway.execute({ action: 'init', projectId: 'other' }, undefined);
     const agentless = bridge.requests.filter((request) => request.method === 'POST' && request.path === '/v1/projects/init').at(-1);
     assert.equal('root' in agentless.body, false, 'an agentless call sends no root');
   } finally {

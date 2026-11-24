@@ -59,16 +59,21 @@ test('the package publishes the JieZi mini-app development skill', () => {
   assert.match(frontmatter[1], /^name: jiezi-miniapp$/m);
   assert.match(frontmatter[1], /^description: .+mini-app.+/m);
   assert.ok(skill.length < 8192, 'main skill stays below the preset tool-result pruning threshold');
-  for (const contract of ['nsh.json', '.nsh/types', 'testID', 'miniapp_build', 'miniapp_deploy', 'miniapp_reload', 'miniapp_status', 'miniapp_ui', 'miniapp_action', 'miniapp_diagnostics', 'miniapp_doctor', 'jiezi.json', 'docs/about.md', '.jz']) {
+  for (const contract of ['nsh.json', '.nsh/types', 'testID', 'miniapp({ action:', 'action: "init"', 'action: "build"', 'action: "deploy"', 'action: "status"', 'action: "diagnostics"', 'miniapp_ui', 'miniapp_action', 'jiezi-miniapp', 'jiezi.json', 'docs/about.md', '.jz']) {
     assert.ok(skill.includes(contract), `skill covers ${contract}`);
   }
 
-  for (const name of ['components.md', 'source-and-capabilities.md', 'device-verification-and-repair.md', 'presentation-and-package.md']) {
+  for (const name of ['components.md', 'source-and-capabilities.md', 'device-verification-and-repair.md', 'presentation-and-package.md', 'tool-reference.md']) {
     const reference = readFileSync(join(ROOT, 'skills', 'jiezi-miniapp', 'references', name), 'utf8');
     assert.ok(reference.length < 8192, `${name} stays below the pruning threshold`);
     assert.ok(skill.includes(`references/${name}`), `skill links ${name}`);
   }
   assert.ok(skill.includes('api/README.md'), 'main skill links the bundled API snapshot');
+
+  const reference = readFileSync(join(ROOT, 'skills', 'jiezi-miniapp', 'references', 'tool-reference.md'), 'utf8');
+  for (const token of ['deviceAction', 'ensure_ready', 'wait: true', 'capture', 'screen', 'releaseId', 'digests']) {
+    assert.ok(reference.includes(token), `tool reference documents ${token}`);
+  }
 
   const api = join(ROOT, 'skills', 'jiezi-miniapp', 'api');
   for (const path of ['nsh/index.d.ts', 'nsh/types.d.ts', 'nsh/base.d.ts', 'nsh/mobile.d.ts', 'jiezi/native/index.d.ts', 'jiezi/native/index.js', 'jiezi/native/runtime.js']) {

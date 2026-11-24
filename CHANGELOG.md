@@ -3,6 +3,28 @@
 本文件记录每个公开发布版本的变更；格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.1.3] - 2026-11-24
+
+### 变更
+
+- 工具面收敛为三个工具：常驻的 `miniapp` 动作枚举
+  （`init`/`build`/`deploy`/`status`/`reload`/`open`/`device`/`doctor`/`diagnostics`），以及
+  `jiezi-miniapp` 技能加载后才出现的 `miniapp_ui`（`outline`/`capture`/`screen`）与
+  `miniapp_action`。原有十四个工具的能力全部保留，映射、参数、返回值与错误码见
+  `skills/jiezi-miniapp/references/tool-reference.md`。
+- 常驻提示词从完整流程说明收缩为五条硬约束；流程、参数与失败路由移入 `jiezi-miniapp` 技能。
+- 预设为 `jiezi-tools` 行增加 `activationSkills: ['jiezi-miniapp']`：普通编码会话首轮只多一个工具，
+  观察/操作工具在技能加载后出现。
+
+### 移除
+
+- 删除 `miniapp_init`、`miniapp_build`、`miniapp_deploy`、`miniapp_status`、`miniapp_reload`、
+  `miniapp_open`、`miniapp_doctor`、`miniapp_capture`、`miniapp_screen`、`miniapp_devices`、
+  `miniapp_device`、`miniapp_diagnostics` 十二个独立工具名；对应能力改由 `miniapp` 动作与
+  `miniapp_ui` 模式提供。升级后请新建会话以获得新的工具面。
+
+[1.1.3]: https://github.com/FengWuFei/dsh-jiezi/releases/tag/v1.1.3
+
 ## [1.1.2] - 2026-11-24
 
 ### 新增

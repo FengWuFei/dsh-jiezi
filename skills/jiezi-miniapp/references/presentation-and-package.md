@@ -53,11 +53,12 @@ Host renderer would turn them into tappable links.
 `sRGB` chunk, not animated, at most 2 MiB, no pre-applied rounded corners. A
 missing icon is valid and the Host draws its default mini-app icon.
 
-`miniapp_init` scaffolds `jiezi.json` and `docs/about.md`, so edit them like
-source files. `miniapp_build` writes minimal ones only for a pre-`.jz` project
-that has no `jiezi.json` at all, and reports `presentationCreated` and
-`synthesizedPurposes`. It never overwrites an authored file; an authored file
-that omits a required purpose is a build error, not a silent fallback.
+`miniapp({ action: "init" })` scaffolds `jiezi.json` and `docs/about.md`, so edit
+them like source files. `miniapp({ action: "build" })` writes minimal ones only
+for a pre-`.jz` project that has no `jiezi.json` at all, and reports
+`presentationCreated` and `synthesizedPurposes`. It never overwrites an authored
+file; an authored file that omits a required purpose is a build error, not a
+silent fallback.
 
 ## Capability declarations
 
@@ -112,7 +113,7 @@ install refusal returns the same code in its status/evidence.
 | `JZ_BUILD_CONFLICT` | same app+build is installed with different bytes | increase build and rebuild |
 | `JZ_UNTRUSTED` | untrusted root, certificate, or revoked signer/package | stop; report bridge/Host trust state; do not retry unchanged |
 | `JZ_BAD_SIGNATURE`, `JZ_HASH_MISMATCH` | signature or integrity failure | stop; rebuild; never patch or retry the same artifact |
-| `JZ_DEVELOPMENT_IMPORT` | development-signed package offered to file import | deliver through the paired `miniapp_deploy` route instead |
+| `JZ_DEVELOPMENT_IMPORT` | development-signed package offered to file import | deliver through the paired `miniapp({ action: "deploy" })` route instead |
 | `JZ_UNSUPPORTED_FORMAT`, `JZ_CRITICAL_FIELD` | newer/unknown format fields | update the Host/toolchain; never strip fields to force acceptance |
 
 A refusal is never a warning. Fix the named source and create a new build; do

@@ -26,8 +26,8 @@
         "zh": "芥子开发模式"
       },
       "description": {
-        "en": "Initialize, build, sign, deploy, and drive Native Shell mini-apps on a paired iPhone, with a self-contained development skill and a sidebar pairing panel.",
-        "zh": "在 DSH 里初始化、构建、签名、部署并调试 Native Shell 小程序：自带开发 skill、十四个 miniapp_* 工具和侧栏配对面板。"
+        "en": "Initialize, build, sign, deploy, and drive Native Shell mini-apps on a paired iPhone with one miniapp action tool, two skill-gated observation tools, a self-contained development skill, and a sidebar pairing panel.",
+        "zh": "在 DSH 里初始化、构建、签名、部署并调试 Native Shell 小程序：一个 miniapp 动作工具、两个技能门控的观察工具、自带开发 skill 与侧栏配对面板。"
       },
       "author": "FengWuFei",
       "homepage": "https://github.com/FengWuFei/dsh-jiezi#readme",

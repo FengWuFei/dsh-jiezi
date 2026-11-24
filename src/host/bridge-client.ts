@@ -21,7 +21,7 @@ export interface BridgeSettings {
   bridgeCliPath: string;
   autoStart: boolean;
   timeoutMs: number;
-  /** Where miniapp_init puts a new project relative to the Session working directory. */
+  /** Where the init action puts a new project relative to the Session working directory. */
   projectLayout: ProjectLayout;
 }
 

@@ -203,7 +203,7 @@ export class AppleDeviceHost implements DeviceHost {
           .join(', ');
         throw new JieZiError(
           'host_binding_required',
-          `Select the host UDID once with miniapp_device ensure_ready(hostDeviceId). Candidates: ${candidates || 'none'}`,
+          `Select the host UDID once with miniapp({ action: "device", deviceAction: "ensure_ready", hostDeviceId }). Candidates: ${candidates || 'none'}`,
           { retryable: false },
         );
       }

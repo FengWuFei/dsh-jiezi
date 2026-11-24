@@ -38,7 +38,7 @@
 
 | 🧠 A complete Agent | 🔁 An end-to-end loop | 👀 Semantic device verification | 🔐 Explicit pairing, local state |
 | --- | --- | --- | --- |
-| The official standard Agent capabilities plus 14 `miniapp_*` tools—not a closed mini-app-only shell. | From an empty directory to a signed Release, then installation, launch, and status on a device. | Inspect the UI tree, tap, type, scroll, and assert with screenshots and diagnostics as evidence. | QR codes are rendered locally. Keys, devices, and delivery records stay on your computer; initialization is always explicit. |
+| Official standard Agent capabilities plus one `miniapp` action tool and two skill-gated observation tools—not a closed mini-app-only shell. | From an empty directory to a signed Release, then installation, launch, and status on a device. | Inspect the UI tree, tap, type, scroll, and assert with screenshots and diagnostics as evidence. | QR codes are rendered locally. Keys, devices, and delivery records stay on your computer; initialization is always explicit. |
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/delivery-loop-en-dark.svg" />
@@ -116,45 +116,44 @@ Click the pairing QR code in the panel and scan it with an iPhone running the Ji
 
 Create an **empty directory** as the Session working directory, select the **JieZi development mode** preset, and ask:
 
-> Use miniapp_init to create a counter mini-app called hello. Build and deploy it to my iPhone, then verify that tapping “+1” updates the count correctly.
+> Use the miniapp tool's init action to create a counter mini-app called hello. Build and deploy it to my iPhone, then verify that tapping “+1” updates the count correctly.
 
 The Agent works through the delivery loop instead of stopping at source code:
 
 ```text
-miniapp_init → miniapp_build → miniapp_deploy → miniapp_status(wait: true)
-                                      ↓
-miniapp_diagnostics ← miniapp_action(expect) ← miniapp_ui
+miniapp(init) → miniapp(build) → miniapp(deploy) → miniapp(status, wait: true)
+                                        ↓
+miniapp(diagnostics) ← miniapp_action(expect) ← miniapp_ui(outline)
 ```
 
-When the environment is uncertain, ask the Agent to run `miniapp_doctor` first. For a stuck instance or blocking Host alert, use `miniapp_reload` rather than deploying the same Release again.
+When the environment is uncertain, ask the Agent to run the `miniapp` `doctor` action first. For a stuck instance or blocking Host alert, use `action: "reload"` rather than deploying the same Release again.
 
 > [!NOTE]
-> Every Release is one signed `.jz` container: besides the executable payload it carries the app-library icon, summary, `docs/about.md` description, and capability purposes. Those are project source (`miniapp_init` creates them) and can be edited directly; the build reports oversized summaries, HTML in the description, wrong icon size/color space, or missing sensitive-capability purposes with stable `JZ_*` codes.
+> Every Release is one signed `.jz` container: besides the executable payload it carries the app-library icon, summary, `docs/about.md` description, and capability purposes. Those are project source (`init` creates them) and can be edited directly; the build reports oversized summaries, HTML in the description, wrong icon size/color space, or missing sensitive-capability purposes with stable `JZ_*` codes.
 
 > [!NOTE]
-> By default, `miniapp_init` uses the **Session working directory itself** as the project root, and that directory must be empty. To keep multiple mini-apps in one directory, set `projectLayout` to `named-subdirectory` on `jiezi-tools`; projects will be created at `<working directory>/<projectId>`.
+> By default, the `init` action uses the **Session working directory itself** as the project root, and that directory must be empty. To keep multiple mini-apps in one directory, set `projectLayout` to `named-subdirectory` on `jiezi-tools`; projects will be created at `<working directory>/<projectId>`.
+
+> [!NOTE]
+> **1.1.3 collapses the tool surface.** Start a new session after upgrading; old sessions do not gain the three-tool surface. `miniapp_ui`/`miniapp_action` appear after the `jiezi-miniapp` skill loads (one step later for a UI-invoked skill); if they are still missing after a resume, have the Agent call `skill` again.
 
 > [!TIP]
 > **Upgrades preserve pairing.** After a plugin update, DSH restart, or bridge restart, pairing is restored from `~/.jiezi` (or your configured `stateDir`). Your iPhone reconnects with its existing credentials—no reinitialization or QR scan required.
 
 ## Toolbox
 
-| Area | Tool | Purpose |
+| Tool | Visible when | Covers |
 | --- | --- | --- |
-| Project | `miniapp_init` | Initialize a Native Shell project in an empty directory (including the `jiezi.json` and `docs/about.md` presentation files) and preflight development-certificate coverage for the `appId` |
-| Build | `miniapp_build` | Build the signed payload and pack it into one signed `.jz` container (icon, summary, restricted-Markdown description, capability purposes); returns an immutable Release with SHA-256 or structured compile errors with stable `JZ_*` codes |
-| Delivery | `miniapp_deploy` | Install a signed Release on a paired device; use `force: true` to reinstall |
-| Delivery | `miniapp_reload` | Reinstall and launch the current Release as a new operation to recover a stuck instance or handle a Host alert |
-| Delivery | `miniapp_status` | Inspect installation, runtime, Host version, and bridge state; optionally wait for a terminal operation state |
-| Environment | `miniapp_doctor` | Check bridge identity, `nsh`, Host compatibility, pairing, and automation at once; `fix: true` performs only safe repairs |
-| Observe | `miniapp_ui` | Read the semantic UI tree, including `testID`, labels, roles, values, and hierarchy |
-| Act | `miniapp_action` | Tap, type, scroll, and run multi-condition assertions; failures are returned as data, never disguised as success |
-| Evidence | `miniapp_capture` | Capture the mini-app view |
-| Evidence | `miniapp_screen` | Capture the full device screen, including the status bar, overlays, and Host chrome |
-| Diagnostics | `miniapp_diagnostics` | Read device diagnostic events by operation or evidence ID to drive source repair |
-| Devices | `miniapp_device` | Inspect unified device state or use `launch_host` and `ensure_ready` to restore Host and automation readiness |
-| Devices | `miniapp_devices` | List targets and distinguish JieZi pairing, CoreDevice/Xcode pairing, and Host running state |
-| Launch | `miniapp_open` | Open an installed mini-app directly after restarting the Host without downloading its artifact again |
+| `miniapp` (action enum) | Always | `init` / `build` / `deploy` / `status` / `reload` / `open` / `device` / `doctor` / `diagnostics` |
+| `miniapp_ui` | After the `jiezi-miniapp` skill loads | `mode: "outline"` semantic UI tree, `mode: "capture"` page tree plus screenshot, `mode: "screen"` full-device PNG |
+| `miniapp_action` | After the `jiezi-miniapp` skill loads | Tap, type, scroll, and multi-condition assertions; failures are returned as data, never disguised as success |
+
+Every former per-verb tool (`miniapp_init/build/deploy/status/reload/open/doctor/capture/screen/devices/device/diagnostics`)
+maps onto an action or mode above; no capability was removed. `deploy` still
+wakes the Agent that started it, `status` still supports a blocking wait,
+`capture` keeps the tree truncation and `requestId` re-read, and `screen` still
+captures the full device through the Host. Exact parameters, results and error
+codes are in the [skill tool reference](./skills/jiezi-miniapp/references/tool-reference.md).
 
 See [technical details](./docs/DETAIL.md) for protocols, error semantics, and automation boundaries. The Agent-facing development contract lives in the [`jiezi-miniapp` Skill](./skills/jiezi-miniapp/SKILL.md).
 
@@ -170,6 +169,7 @@ Both `jiezi-runtime` and `jiezi-tools` accept the first five options; `projectLa
 | `autoStart` | Enabled in the shipped configuration; the supervisor starts and monitors the bridge on demand |
 | `timeoutMs` | `30000` |
 | `projectLayout` | `working-directory`; alternatively `named-subdirectory` |
+| `activationSkills` | `jiezi-tools` only; defaults to `['jiezi-miniapp']` and admits `miniapp_ui`/`miniapp_action` after that skill loads |
 
 See [docs/DETAIL.md](./docs/DETAIL.md) for bridge identity checks, Host lifecycle recovery, and safe-repair rules.
 
@@ -183,7 +183,7 @@ See [docs/DETAIL.md](./docs/DETAIL.md) for bridge identity checks, Host lifecycl
 - **Development scope**: This repository does not include the JieZi iOS App, production signing certificates, or a Linux build service. It does not provide APNs, automatic IPA installation, or device unlocking.
 
 > [!IMPORTANT]
-> Host `0.1.x` may still show the legacy frozen-snapshot alert. The plugin reports the installed and minimum required versions in device, delivery, and diagnostic results. `miniapp_reload` can create a fresh instance, but updating the Host App is the permanent fix.
+> Host `0.1.x` may still show the legacy frozen-snapshot alert. The plugin reports the installed and minimum required versions in device, delivery, and diagnostic results. The `miniapp` `reload` action can create a fresh instance, but updating the Host App is the permanent fix.
 
 ## Development and contributing
 

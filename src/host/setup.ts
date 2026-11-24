@@ -78,7 +78,7 @@ function failureFor(error: Error & { code?: unknown }, stdout: string, stderr: s
   if (code === 'build_failed' && /\bnsh\b/i.test(message)) {
     return new JieZiError(
       'nsh_missing',
-      `${message} Restart the bridge from the JieZi panel after fixing the toolchain; miniapp_doctor({ fix: true }) can rewrite a stale configured path.`,
+      `${message} Restart the bridge from the JieZi panel after fixing the toolchain; miniapp({ action: "doctor", fix: true }) can rewrite a stale configured path.`,
       { retryable: false },
     );
   }

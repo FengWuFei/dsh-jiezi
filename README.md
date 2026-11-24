@@ -38,7 +38,7 @@
 
 | 🧠 标准 Agent | 🔁 完整交付闭环 | 👀 语义级真机验证 | 🔐 显式配对与本地状态 |
 | --- | --- | --- | --- |
-| 官方标准 Agent 能力 + 14 个 `miniapp_*` 工具，不是封闭的小程序工具集。 | 从空目录到已签名 Release，再到设备安装、启动与状态回传。 | 读取界面树，执行点击、输入、滚动和断言，结合截图与诊断定位问题。 | 二维码在本地生成；密钥、设备与交付记录保存在本机，初始化由你主动触发。 |
+| 官方标准 Agent 能力 + 一个 `miniapp` 动作工具与两个技能门控的观察工具，不是封闭的小程序工具集。 | 从空目录到已签名 Release，再到设备安装、启动与状态回传。 | 读取界面树，执行点击、输入、滚动和断言，结合截图与诊断定位问题。 | 二维码在本地生成；密钥、设备与交付记录保存在本机，初始化由你主动触发。 |
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./docs/assets/delivery-loop-zh-dark.svg" />
@@ -116,45 +116,42 @@ file:/绝对路径/dsh-jiezi-<版本>.tgz
 
 新建一个**空目录**作为会话工作目录，选择 **「芥子开发模式」** 预设，然后直接告诉 Agent：
 
-> 用 miniapp_init 创建一个叫 hello 的计数器小程序，构建并部署到我的 iPhone，再验证点击“+1”后数字会正确更新。
+> 用 miniapp 工具的 init 动作创建一个叫 hello 的计数器小程序，构建并部署到我的 iPhone，再验证点击“+1”后数字会正确更新。
 
 Agent 会沿着下面的闭环工作，而不是只给你一份源码：
 
 ```text
-miniapp_init → miniapp_build → miniapp_deploy → miniapp_status(wait: true)
-                                      ↓
-miniapp_diagnostics ← miniapp_action(expect) ← miniapp_ui
+miniapp(init) → miniapp(build) → miniapp(deploy) → miniapp(status, wait: true)
+                                        ↓
+miniapp(diagnostics) ← miniapp_action(expect) ← miniapp_ui(outline)
 ```
 
-环境状态不确定时，先让 Agent 调用 `miniapp_doctor`；遇到卡住的实例或宿主弹窗，使用 `miniapp_reload`，不要重复部署同一个 Release。
+环境状态不确定时，先让 Agent 调用 `miniapp` 的 `doctor` 动作；遇到卡住的实例或宿主弹窗，使用 `action: "reload"`，不要重复部署同一个 Release。
 
 > [!NOTE]
-> `miniapp_init` 默认把**会话工作目录本身**作为项目根，目录必须为空。如果一个目录要容纳多个小程序，请将 `jiezi-tools` 的 `projectLayout` 配置为 `named-subdirectory`，项目会创建在 `<工作目录>/<projectId>`。
+> `miniapp` 的 `init` 动作默认把**会话工作目录本身**作为项目根，目录必须为空。如果一个目录要容纳多个小程序，请将 `jiezi-tools` 的 `projectLayout` 配置为 `named-subdirectory`，项目会创建在 `<工作目录>/<projectId>`。
 
 > [!NOTE]
-> 每次 Release 都是单个签名 `.jz`：除可执行载荷外，还带应用库展示所需的图标、摘要、`docs/about.md` 说明和能力用途。这些是项目源码（`miniapp_init` 会生成），可直接编辑；构建会用稳定的 `JZ_*` 码指出摘要过长、说明含 HTML、图标尺寸/色彩空间不符或敏感能力缺用途等问题。
+> 每次 Release 都是单个签名 `.jz`：除可执行载荷外，还带应用库展示所需的图标、摘要、`docs/about.md` 说明和能力用途。这些是项目源码（`init` 会生成），可直接编辑；构建会用稳定的 `JZ_*` 码指出摘要过长、说明含 HTML、图标尺寸/色彩空间不符或敏感能力缺用途等问题。
+
+> [!NOTE]
+> **1.1.3 收敛了工具面。** 升级后请新建会话：旧会话不会自动获得 `miniapp` 的三工具面；`miniapp_ui`/`miniapp_action` 在加载 `jiezi-miniapp` 技能后出现（从 UI 直接调用技能时晚一步），若恢复会话后仍不可见，让 Agent 再调用一次 `skill` 即可。
 
 > [!TIP]
 > **升级不会清空配对。** 插件更新、DSH 重启或桥接重启后，配对状态仍从 `~/.jiezi`（或配置的 `stateDir`）恢复，iPhone 使用原凭据自动重连，不需要重新初始化或扫码。
 
 ## 工具全景
 
-| 分组 | 工具 | 作用 |
+| 工具 | 何时可见 | 覆盖 |
 | --- | --- | --- |
-| 项目 | `miniapp_init` | 从空目录初始化 Native Shell 项目（含 `jiezi.json` 与 `docs/about.md` 表现层文件），并预检开发证书对 `appId` 的覆盖范围 |
-| 构建 | `miniapp_build` | 构建签名载荷并打包为单个 `.jz`（含图标、摘要、受限 Markdown 说明与能力用途），返回包含 SHA-256 的不可变 Release；失败时给出结构化编译错误与稳定 `JZ_*` 码 |
-| 交付 | `miniapp_deploy` | 将已签名 Release 安装到配对设备；`force: true` 强制重新安装 |
-| 交付 | `miniapp_reload` | 以新操作重新安装并启动当前 Release，用于恢复卡住的实例或处理宿主弹窗 |
-| 交付 | `miniapp_status` | 查询安装、运行时、宿主版本与桥接状态；支持等待操作终态 |
-| 环境 | `miniapp_doctor` | 一次检查桥接身份、`nsh`、宿主兼容性、配对与自动化；`fix: true` 只执行安全修复 |
-| 观察 | `miniapp_ui` | 读取语义界面树，包括 `testID`、标签、角色、值与层级 |
-| 操作 | `miniapp_action` | 点击、输入、滚动与多条件断言；失败按数据返回，不会伪装成成功 |
-| 证据 | `miniapp_capture` | 获取小程序视图截图 |
-| 证据 | `miniapp_screen` | 获取包含状态栏、弹层和宿主外壳的设备全屏截图 |
-| 诊断 | `miniapp_diagnostics` | 按操作或证据 ID 获取设备侧诊断事件，驱动源码修复 |
-| 设备 | `miniapp_device` | 查询统一设备状态，或通过 `launch_host`、`ensure_ready` 恢复宿主与自动化就绪 |
-| 设备 | `miniapp_devices` | 列出可选目标，区分芥子配对、CoreDevice/Xcode 配对和宿主运行状态 |
-| 启动 | `miniapp_open` | 重启宿主后直接打开已安装的小程序，不重新下载产物 |
+| `miniapp`（action 枚举） | 常驻 | `init` / `build` / `deploy` / `status` / `reload` / `open` / `device` / `doctor` / `diagnostics` |
+| `miniapp_ui` | 加载 `jiezi-miniapp` 技能后 | `mode: "outline"` 语义界面树、`mode: "capture"` 页面树与截图、`mode: "screen"` 设备全屏 PNG |
+| `miniapp_action` | 加载 `jiezi-miniapp` 技能后 | 点击、输入、滚动与多条件断言；失败按数据返回，不会伪装成成功 |
+
+原有的逐动作工具（`miniapp_init/build/deploy/status/reload/open/doctor/capture/screen/devices/device/diagnostics`）
+全部收敛为上面的动作与模式，能力没有删除：`deploy` 仍会在终态唤醒发起它的 Agent，`status` 仍支持阻塞等待，
+`capture` 仍保留树截断与 `requestId` 重读，`screen` 仍是宿主侧整屏截图。完整参数、返回值与错误码见
+[Skill 工具参考](./skills/jiezi-miniapp/references/tool-reference.md)。
 
 完整的协议、错误语义与自动化边界见 [技术细节](./docs/DETAIL.md)；Agent 使用的开发规范位于 [`jiezi-miniapp` Skill](./skills/jiezi-miniapp/SKILL.md)。
 
@@ -170,6 +167,7 @@ miniapp_diagnostics ← miniapp_action(expect) ← miniapp_ui
 | `autoStart` | 随包配置已开启，由 supervisor 按需启动并监督桥接 |
 | `timeoutMs` | `30000` |
 | `projectLayout` | `working-directory`；可改为 `named-subdirectory` |
+| `activationSkills` | 仅 `jiezi-tools`；默认 `['jiezi-miniapp']`，技能加载后放行 `miniapp_ui`/`miniapp_action` |
 
 桥接身份识别、宿主生命周期恢复及安全修复的详细规则，请阅读 [docs/DETAIL.md](./docs/DETAIL.md)。
 
@@ -183,7 +181,7 @@ miniapp_diagnostics ← miniapp_action(expect) ← miniapp_ui
 - **开发态边界**：本仓库不包含芥子 iOS App、生产签名证书或 Linux 构建服务，也不提供 APNs、自动 IPA 安装和设备解锁。
 
 > [!IMPORTANT]
-> 宿主 `0.1.x` 仍可能出现旧版冻结快照提示。插件会在设备、部署和诊断结果中标出版本与最低要求；`miniapp_reload` 可以创建新实例，但根治仍需更新宿主 App。
+> 宿主 `0.1.x` 仍可能出现旧版冻结快照提示。插件会在设备、部署和诊断结果中标出版本与最低要求；`miniapp` 的 `reload` 动作可以创建新实例，但根治仍需更新宿主 App。
 
 ## 开发与贡献
 

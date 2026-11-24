@@ -66,5 +66,5 @@
   <text x="982" y="160" class="meta">SCREEN · DIAGNOSTICS</text>
 
   <path d="M1064 174 V204 Q1064 222 1046 222 H386 Q368 222 368 204 V181" class="loop"/>
-  <text x="716" y="253" text-anchor="middle" class="loop-label">miniapp_diagnostics · EVIDENCE-DRIVEN REPAIR</text>
+  <text x="716" y="253" text-anchor="middle" class="loop-label">miniapp diagnostics · EVIDENCE-DRIVEN REPAIR</text>
 </svg>

@@ -43,7 +43,7 @@ export function certificateCovers(apps, appId) {
 
 /** Why an app id outside the development certificate cannot be signed. */
 export function signingWarning(appId) {
-  return `appId ${appId} is outside the development certificate scope ${DEV_CERT_APPS}; miniapp_build cannot sign it until a certificate covering that id is configured.`;
+  return `appId ${appId} is outside the development certificate scope ${DEV_CERT_APPS}; the miniapp build cannot sign it until a certificate covering that id is configured.`;
 }
 
 /** Source uses ../templates beside src; the packaged bridge uses ./templates. */
@@ -134,8 +134,8 @@ function writeMetadata(staging, request) {
  * reaches `docs/about.md` so a name such as `A <b> B` or ``A `b` B`` cannot
  * create a project the media validators (or the iOS reader) refuse. The
  * generated files
- * are validated here so `miniapp_init` can never hand out a project that
- * `miniapp_build` immediately rejects. A declared sensitive capability gets
+ * are validated here so the miniapp init action can never hand out a project that
+ * the build immediately rejects. A declared sensitive capability gets
  * the same neutral synthesized purpose the legacy-project migration uses.
  */
 function writePresentation(staging, request) {

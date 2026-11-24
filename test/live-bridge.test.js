@@ -65,16 +65,13 @@ test('preset tools execute against a live jiezi-bridge', { timeout: 120_000 }, a
   try {
     apply(ctx, { socketPath: info.socket, timeoutMs: 60_000 });
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
-      'miniapp_action', 'miniapp_build', 'miniapp_capture', 'miniapp_deploy',
-      'miniapp_device', 'miniapp_devices', 'miniapp_diagnostics', 'miniapp_doctor',
-      'miniapp_init', 'miniapp_open', 'miniapp_reload', 'miniapp_screen',
-      'miniapp_status', 'miniapp_ui',
+      'miniapp', 'miniapp_action', 'miniapp_ui',
     ]);
     assert.equal(sections.length, 1);
-    assert.match(sections[0].text, /host-component/);
+    assert.match(sections[0].text, /jiezi-miniapp/);
 
-    const devices = tools.find((tool) => tool.name === 'miniapp_devices');
-    const deviceList = await devices.execute({}, {});
+    const gateway = tools.find((tool) => tool.name === 'miniapp');
+    const deviceList = await gateway.execute({ action: 'device' }, {});
     assert.equal(deviceList.ok, true);
     assert.deepEqual(deviceList.devices, []);
 
@@ -94,25 +91,25 @@ test('preset tools execute against a live jiezi-bridge', { timeout: 120_000 }, a
     assert.equal(waiting.pairing.state, 'waiting');
     assert.equal(waiting.pairing.payload.sessionId, sessionId);
 
-    const init = tools.find((tool) => tool.name === 'miniapp_init');
-    const initialized = await init.execute({ projectId: 'hello', name: 'Hello JieZi', appId: 'com.jiezi.hello' }, {});
+    const init = (args) => gateway.execute({ action: 'init', ...args }, {});
+    const initialized = await init({ projectId: 'hello', name: 'Hello JieZi', appId: 'com.jiezi.hello' });
     assert.equal(initialized.ok, true);
     assert.equal(initialized.projectId, 'hello');
     assert.equal(initialized.projectDir, realpathSync(join(stateDir, 'projects', 'hello')));
     assert.equal(initialized.template, 'jiezi-basic@1');
     assert.equal(initialized.adapter, 'jiezi/native@0.2.0');
     assert.equal(existsSync(join(initialized.projectDir, 'node_modules', 'jiezi', 'native', 'runtime.js')), true);
-    const repeated = await init.execute({ projectId: 'hello' }, {});
+    const repeated = await init({ projectId: 'hello' });
     assert.equal(repeated.ok, false);
     assert.equal(repeated.code, 'project_exists');
 
-    const build = tools.find((tool) => tool.name === 'miniapp_build');
-    const result = await build.execute({ projectId: 'hello' }, {});
+    const build = (args) => gateway.execute({ action: 'build', ...args }, {});
+    const result = await build({ projectId: 'hello' });
     assert.equal(result.ok, true);
     assert.match(result.releaseId, /^rel_[0-9a-f]{16}_\d+$/);
     assert.equal(result.build, 1);
     assert.match(result.sha256, /^[0-9a-f]{64}$/);
-    const rebuilt = await build.execute({ projectId: 'hello' }, {});
+    const rebuilt = await build({ projectId: 'hello' });
     assert.equal(rebuilt.ok, true);
     assert.equal(rebuilt.build, 2);
     assert.notEqual(rebuilt.releaseId, result.releaseId);
@@ -124,15 +121,14 @@ test('preset tools execute against a live jiezi-bridge', { timeout: 120_000 }, a
     writeFileSync(join(brokenDir, 'nsh.json'), JSON.stringify({
       name: 'Broken', id: 'com.jiezi.broken', version: '1.0.0', build: 1,
     }));
-    const broken = await build.execute({ projectId: 'broken' }, {});
+    const broken = await build({ projectId: 'broken' });
     assert.equal(broken.ok, false);
     assert.equal(broken.stage, 'compile');
     assert.equal(broken.errors[0].file, 'App.tsx');
     assert.ok(broken.errors[0].line > 0);
     assert.ok(broken.errors[0].column > 0);
 
-    const status = tools.find((tool) => tool.name === 'miniapp_status');
-    const listed = await status.execute({}, {});
+    const listed = await gateway.execute({ action: 'status' }, {});
     assert.equal(listed.ok, true);
     assert.deepEqual(listed.ops, []);
 
